@@ -1,0 +1,92 @@
+[
+  {
+    "id": "jp_ai_product",
+    "position_name": "AI产品经理",
+    "company": "字节跳动",
+    "location": "北京",
+    "tags": ["AI产品", "B端", "LLM"],
+    "skills": ["产品经理", "需求分析", "数据分析", "LLM", "Agent", "PRD", "用户调研"],
+    "jd_text": "AI产品经理\n公司：字节跳动\n职责：\n1. 负责AI产品需求分析与方案设计，推动产品从0到1落地；\n2. 设计Agent数字员工等复杂模块产品；\n3. 持续洞察用户需求并转化为可交付方案。\n要求：\n1. 有B端产品意识与古典产品经理基本功；\n2. 了解AI/LLM技术原理，对AI生产力工具有探索兴趣；\n3. 有产品思维和数据分析能力，能清晰阐述方案逻辑。\n加分项：用过Coze/Dify等Agent低代码平台。"
+  },
+  {
+    "id": "jp_algorithm",
+    "position_name": "算法工程师",
+    "company": "腾讯",
+    "location": "深圳",
+    "tags": ["机器学习", "深度学习", "NLP"],
+    "skills": ["Python", "TensorFlow", "PyTorch", "机器学习", "深度学习", "NLP", "算法"],
+    "jd_text": "算法工程师\n公司：腾讯\n要求：\n1. 硕士及以上学历，计算机相关专业；\n2. 熟练使用Python、TensorFlow或PyTorch；\n3. 有机器学习/深度学习项目经验；\n4. 良好的沟通能力和团队协作精神；\n5. 有顶会论文者优先。\n硬技能：Python编程、深度学习框架、机器学习算法。"
+  },
+  {
+    "id": "jp_backend",
+    "position_name": "后端开发工程师",
+    "company": "阿里巴巴",
+    "location": "杭州",
+    "tags": ["后端", "Java", "分布式"],
+    "skills": ["Java", "Spring", "MySQL", "Redis", "分布式", "微服务", "后端"],
+    "jd_text": "后端开发工程师\n公司：阿里巴巴\n职责：\n1. 负责核心业务系统的设计与开发；\n2. 保障系统高可用、高并发、高性能。\n要求：\n1. 熟练掌握Java及Spring生态；\n2. 熟悉MySQL、Redis等存储中间件；\n3. 了解分布式、微服务架构；\n4. 计算机相关专业本科及以上。"
+  },
+  {
+    "id": "jp_frontend",
+    "position_name": "前端开发工程师",
+    "company": "美团",
+    "location": "北京",
+    "tags": ["前端", "React", "Vue"],
+    "skills": ["JavaScript", "TypeScript", "React", "Vue", "Node.js", "前端", "CSS"],
+    "jd_text": "前端开发工程师\n公司：美团\n职责：\n1. 负责核心业务前端开发与体验优化；\n2. 与产品、设计、后端协作完成需求交付。\n要求：\n1. 熟练掌握 JavaScript/TypeScript；\n2. 熟悉 React 或 Vue 框架；\n3. 了解前端工程化与性能优化；\n4. 计算机相关专业。"
+  },
+  {
+    "id": "jp_data_analyst",
+    "position_name": "数据分析师",
+    "company": "京东",
+    "location": "北京",
+    "tags": ["数据分析", "SQL", "增长"],
+    "skills": ["数据分析", "SQL", "Python", "Tableau", "AB实验", "增长分析"],
+    "jd_text": "数据分析师\n公司：京东\n职责：\n1. 通过数据分析支持业务决策；\n2. 设计并分析AB实验，输出增长洞察。\n要求：\n1. 熟练使用SQL进行数据提取与分析；\n2. 掌握Python数据分析工具；\n3. 熟悉AB实验、漏斗分析等方法论；\n4. 有较强的逻辑思维和业务理解力。"
+  },
+  {
+    "id": "jp_ml_engineer",
+    "position_name": "机器学习工程师",
+    "company": "百度",
+    "location": "北京",
+    "tags": ["机器学习", "推荐系统", "Python"],
+    "skills": ["Python", "机器学习", "推荐系统", "PyTorch", "特征工程", "模型训练"],
+    "jd_text": "机器学习工程师\n公司：百度\n职责：\n1. 负责推荐/搜索系统的算法迭代；\n2. 进行特征工程与模型训练优化。\n要求：\n1. 熟练Python与主流深度学习框架；\n2. 有推荐系统或搜索相关项目经验；\n3. 扎实的机器学习基础；\n4. 硕士及以上优先。"
+  },
+  {
+    "id": "jp_llm_app",
+    "position_name": "大模型应用开发工程师",
+    "company": "智谱AI",
+    "location": "北京",
+    "tags": ["LLM", "RAG", "Agent"],
+    "skills": ["Python", "LLM", "RAG", "Agent", "向量检索", "Prompt", "FastAPI"],
+    "jd_text": "大模型应用开发工程师\n公司：智谱AI\n职责：\n1. 基于大模型构建RAG问答、Agent工作流等应用；\n2. 负责Prompt设计、向量检索与效果迭代。\n要求：\n1. 熟练Python，熟悉FastAPI等后端框架；\n2. 了解RAG、向量数据库、Agent构成逻辑；\n3. 有LLM应用实践经验者优先。"
+  },
+  {
+    "id": "jp_product_intern",
+    "position_name": "产品实习生",
+    "company": "小米",
+    "location": "北京",
+    "tags": ["产品", "实习", "C端"],
+    "skills": ["产品", "需求分析", "竞品分析", "原型设计", "用户调研"],
+    "jd_text": "产品实习生\n公司：小米\n职责：\n1. 协助完成需求分析、竞品调研与原型设计；\n2. 跟进产品迭代与上线验收。\n要求：\n1. 对产品有热情，逻辑清晰、表达能力强；\n2. 了解基本的产品方法论；\n3. 每周到岗4天以上，本科及以上。"
+  },
+  {
+    "id": "jp_data_product",
+    "position_name": "数据产品经理",
+    "company": "网易",
+    "location": "杭州",
+    "tags": ["数据产品", "B端", "数据分析"],
+    "skills": ["数据产品", "数据分析", "SQL", "需求分析", "指标体系", "PRD"],
+    "jd_text": "数据产品经理\n公司：网易\n职责：\n1. 负责数据平台/数据产品的需求设计与落地；\n2. 搭建指标体系，支持业务数据化运营。\n要求：\n1. 有数据产品或数据分析背景；\n2. 熟悉SQL，理解指标体系设计；\n3. 有B端产品意识和系统化思维。"
+  },
+  {
+    "id": "jp_test_dev",
+    "position_name": "测试开发工程师",
+    "company": "滴滴",
+    "location": "北京",
+    "tags": ["测试开发", "自动化", "Python"],
+    "skills": ["Python", "自动化测试", "测试框架", "CI", "接口测试"],
+    "jd_text": "测试开发工程师\n公司：滴滴\n职责：\n1. 搭建自动化测试框架与CI流程；\n2. 负责接口、性能等测试体系建设。\n要求：\n1. 熟练Python或Java；\n2. 熟悉自动化测试框架与接口测试；\n3. 计算机相关专业本科及以上。"
+  }
+]

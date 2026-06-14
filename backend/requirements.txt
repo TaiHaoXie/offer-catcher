@@ -1,0 +1,39 @@
+# Offer 捕手 - 后端依赖
+
+# Web框架
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+python-multipart==0.0.9
+
+# AI/LLM
+litellm==1.51.0
+openai>=1.52.0
+
+# 文档解析
+PyPDF2==3.0.1
+python-docx==1.1.2
+pdfplumber==0.11.0
+PyMuPDF==1.24.0  # 快速 PDF 解析（比 pdfplumber 快 5-10 倍）
+Pillow==10.4.0  # 图片处理（PDF 转图片）
+
+# 数据存储
+tinydb==4.8.0
+
+# Redis 缓存
+redis==5.2.1
+hiredis==2.4.0
+
+# Celery 任务队列
+celery[redis]==5.4.0
+flower==2.0.1  # Celery 监控面板
+
+# 监控和告警
+prometheus-client==0.21.0  # Prometheus 指标导出
+
+# 工具库
+python-dotenv==1.0.1
+pydantic==2.9.0
+pydantic-settings==2.5.2
+
+# 日期处理
+python-dateutil==2.9.0

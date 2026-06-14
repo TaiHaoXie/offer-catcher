@@ -1,0 +1,26 @@
+# Prometheus 配置
+
+global:
+  scrape_interval: 15s  # 抓取间隔
+  evaluation_interval: 15s  # 规则评估间隔
+  external_labels:
+    cluster: 'offer-catcher'
+    environment: 'production'
+
+# 告警规则文件
+rule_files:
+  # - "alerts.yml"
+
+# 抓取配置
+scrape_configs:
+  # Offer 捕手 API
+  - job_name: 'offer-catcher-api'
+    static_configs:
+      - targets: ['backend:8888']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Prometheus 自监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

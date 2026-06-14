@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Offer 捕手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        gemini: {
+                            purple: '#D3C3E3',
+                            pink: '#E8CCD7',
+                            blue: '#B9C9D6',
+                            lavender: '#EBE7F0',
+                            dark: '#2A2E33'
+                        }
+                    },
+                    borderRadius: {
+                        'gemini-card': '28px',
+                        'gemini-pod': '36px'
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #FAF8F5; }
+        .gemini-canvas {
+            background:
+                radial-gradient(circle at 10% 10%, rgba(211, 195, 223, 0.4) 0%, transparent 40%),
+                radial-gradient(circle at 90% 80%, rgba(232, 204, 215, 0.35) 0%, transparent 50%),
+                #FAF8F5;
+        }
+    </style>
+</head>
+<body class="min-h-screen gemini-canvas">
+
+    <div class="max-w-6xl mx-auto px-6 py-12">
+        <!-- 头部 -->
+        <div class="text-center mb-10">
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Offer 捕手</h1>
+            <p class="text-gray-500">学生求职匹配智能体</p>
+        </div>
+
+        <!-- 主要内容区 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- 左侧：简历输入 -->
+            <div class="bg-white/80 backdrop-blur rounded-2xl p-6 shadow-lg">
+                <h2 class="text-lg font-bold mb-4">📄 简历输入</h2>
+
+                <!-- 输入模式切换 -->
+                <div class="flex gap-2 mb-4">
+                    <button id="btn-text-mode" class="px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium">粘贴文本</button>
+                    <button id="btn-file-mode" class="px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium">上传文件</button>
+                </div>
+
+                <!-- 文本输入区 -->
+                <div id="text-input-area">
+                    <textarea id="resume-text" class="w-full h-48 p-3 border rounded-lg text-sm resize-none" placeholder="请粘贴简历内容..."></textarea>
+                    <button id="btn-parse-resume" class="mt-3 w-full py-2 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-lg font-medium">解析简历</button>
+                </div>
+
+                <!-- 文件上传区 -->
+                <div id="file-input-area" class="hidden">
+                    <input type="file" id="resume-file" accept=".pdf,.docx,.txt" class="hidden">
+                    <div id="drop-zone" class="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center cursor-pointer hover:border-purple-400">
+                        <p class="text-gray-500">点击上传或拖拽文件</p>
+                        <p class="text-xs text-gray-400 mt-1">支持 PDF、DOCX 格式</p>
+                    </div>
+                </div>
+
+                <!-- 状态显示 -->
+                <div id="resume-status" class="hidden mt-4 p-3 rounded-lg"></div>
+            </div>
+
+            <!-- 右侧：JD输入和结果 -->
+            <div class="space-y-6">
+                <!-- JD输入 -->
+                <div class="bg-white/80 backdrop-blur rounded-2xl p-6 shadow-lg">
+                    <h2 class="text-lg font-bold mb-4">💼 岗位描述（JD）</h2>
+                    <textarea id="jd-text" class="w-full h-32 p-3 border rounded-lg text-sm resize-none" placeholder="请粘贴岗位描述..."></textarea>
+                    <button id="btn-parse-jd" class="mt-3 px-6 py-2 bg-blue-500 text-white rounded-lg font-medium">解析岗位</button>
+                    <div id="jd-status" class="mt-3 text-sm"></div>
+                </div>
+
+                <!-- 匹配结果 -->
+                <div class="bg-white/80 backdrop-blur rounded-2xl p-6 shadow-lg">
+                    <h2 class="text-lg font-bold mb-4">🎯 匹配结果</h2>
+                    <div id="match-result" class="text-center py-8 text-gray-400">
+                        请先解析简历和岗位描述
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        <div class="mt-6 text-center">
+            <button id="btn-match" disabled class="px-8 py-3 bg-gray-300 text-gray-500 rounded-full font-medium cursor-not-allowed">
+                开始匹配分析
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000';
+        let resumeData = null;
+        let jobData = null;
+
+        // DOM 元素
+        const els = {
+            btnTextMode: document.getElementById('btn-text-mode'),
+            btnFileMode: document.getElementById('btn-file-mode'),
+            textInputArea: document.getElementById('text-input-area'),
+            fileInputArea: document.getElementById('file-input-area'),
+            resumeText: document.getElementById('resume-text'),
+            btnParseResume: document.getElementById('btn-parse-resume'),
+            resumeFile: document.getElementById('resume-file'),
+            dropZone: document.getElementById('drop-zone'),
+            resumeStatus: document.getElementById('resume-status'),
+            jdText: document.getElementById('jd-text'),
+            btnParseJd: document.getElementById('btn-parse-jd'),
+            jdStatus: document.getElementById('jd-status'),
+            btnMatch: document.getElementById('btn-match'),
+            matchResult: document.getElementById('match-result')
+        };
+
+        // 显示消息
+        function showMessage(element, message, type = 'info') {
+            element.classList.remove('hidden');
+            if (type === 'success') {
+                element.className = 'mt-4 p-3 rounded-lg bg-green-100 text-green-700';
+                element.innerHTML = '✅ ' + message;
+            } else if (type === 'error') {
+                element.className = 'mt-4 p-3 rounded-lg bg-red-100 text-red-700';
+                element.innerHTML = '❌ ' + message;
+            } else {
+                element.className = 'mt-4 p-3 rounded-lg bg-blue-100 text-blue-700';
+                element.innerHTML = message;
+            }
+        }
+
+        // 切换输入模式
+        els.btnTextMode.addEventListener('click', () => {
+            els.textInputArea.classList.remove('hidden');
+            els.fileInputArea.classList.add('hidden');
+            els.btnTextMode.className = 'px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium';
+            els.btnFileMode.className = 'px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium';
+        });
+
+        els.btnFileMode.addEventListener('click', () => {
+            els.textInputArea.classList.add('hidden');
+            els.fileInputArea.classList.remove('hidden');
+            els.btnFileMode.className = 'px-4 py-2 bg-purple-100 text-purple-700 rounded-lg text-sm font-medium';
+            els.btnTextMode.className = 'px-4 py-2 bg-gray-100 text-gray-600 rounded-lg text-sm font-medium';
+        });
+
+        // 文件上传
+        els.dropZone.addEventListener('click', () => els.resumeFile.click());
+        els.resumeFile.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            els.btnParseResume.disabled = true;
+            els.btnParseResume.textContent = '解析中...';
+
+            fetch(`${API_URL}/api/v1/resume/upload`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    resumeData = data.data;
+                    showMessage(els.resumeStatus, `${data.data.basic_info.name || '未知'} | ${data.data.basic_info.university || '-'} | ${data.data.basic_info.major || '-'}`, 'success');
+                    checkCanMatch();
+                } else {
+                    showMessage(els.resumeStatus, data.message || '解析失败', 'error');
+                }
+            })
+            .catch(err => {
+                console.error(err);
+                showMessage(els.resumeStatus, '简历解析失败，请检查文件格式', 'error');
+            })
+            .finally(() => {
+                els.btnParseResume.disabled = false;
+                els.btnParseResume.textContent = '解析简历';
+            });
+        });
+
+        // 解析简历（文本）
+        els.btnParseResume.addEventListener('click', () => {
+            const text = els.resumeText.value.trim();
+            if (!text) {
+                showMessage(els.resumeStatus, '请输入简历内容', 'error');
+                return;
+            }
+
+            els.btnParseResume.disabled = true;
+            els.btnParseResume.textContent = '解析中...';
+
+            const formData = new FormData();
+            formData.append('text', text);
+
+            fetch(`${API_URL}/api/v1/resume/parse-text`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('简历解析结果:', data);
+                if (data.success) {
+                    resumeData = data.data;
+                    const info = data.data.basic_info || {};
+                    showMessage(els.resumeStatus, `${info.name || '未知'} | ${info.university || '-'} | ${info.major || '-'}`, 'success');
+                    checkCanMatch();
+                } else {
+                    showMessage(els.resumeStatus, data.message || '解析失败', 'error');
+                }
+            })
+            .catch(err => {
+                console.error('简历解析错误:', err);
+                showMessage(els.resumeStatus, '简历解析失败，请检查内容', 'error');
+            })
+            .finally(() => {
+                els.btnParseResume.disabled = false;
+                els.btnParseResume.textContent = '解析简历';
+            });
+        });
+
+        // 解析JD
+        els.btnParseJd.addEventListener('click', () => {
+            const text = els.jdText.value.trim();
+            if (!text) {
+                els.jdStatus.innerHTML = '<span class="text-red-500">请输入岗位描述</span>';
+                return;
+            }
+
+            els.btnParseJd.disabled = true;
+            els.btnParseJd.textContent = '解析中...';
+
+            const formData = new FormData();
+            formData.append('jd_text', text);
+
+            fetch(`${API_URL}/api/v1/job/parse`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('JD解析结果:', data);
+                if (data.success) {
+                    jobData = data.data;
+                    els.jdStatus.innerHTML = `<span class="text-green-600">✅ 已解析：${data.data.position_name || '未知岗位'}</span>`;
+                    checkCanMatch();
+                } else {
+                    els.jdStatus.innerHTML = `<span class="text-red-500">解析失败</span>`;
+                }
+            })
+            .catch(err => {
+                console.error('JD解析错误:', err);
+                els.jdStatus.innerHTML = '<span class="text-red-500">解析失败</span>';
+            })
+            .finally(() => {
+                els.btnParseJd.disabled = false;
+                els.btnParseJd.textContent = '解析岗位';
+            });
+        });
+
+        // 检查是否可以匹配
+        function checkCanMatch() {
+            if (resumeData && jobData) {
+                els.btnMatch.disabled = false;
+                els.btnMatch.className = 'px-8 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-full font-medium cursor-pointer';
+                els.btnMatch.textContent = '开始匹配分析';
+            }
+        }
+
+        // 匹配分析
+        els.btnMatch.addEventListener('click', () => {
+            if (!resumeData || !jobData) {
+                alert('请先解析简历和岗位描述');
+                return;
+            }
+
+            els.btnMatch.disabled = true;
+            els.btnMatch.textContent = '分析中...';
+            els.matchResult.innerHTML = '<div class="text-center py-8"><div class="w-8 h-8 border-4 border-purple-200 border-t-purple-500 rounded-full animate-spin mx-auto"></div><p class="text-gray-500 mt-2">正在分析...</p></div>';
+
+            const formData = new FormData();
+            formData.append('resume_data', JSON.stringify(resumeData));
+            formData.append('job_data', JSON.stringify(jobData));
+
+            fetch(`${API_URL}/api/v1/match/calculate`, {
+                method: 'POST',
+                body: formData
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('匹配结果:', data);
+                if (data.success) {
+                    const result = data.data;
+                    const score = result.total_score || 0;
+                    let scoreColor = score >= 80 ? 'text-green-600' : score >= 60 ? 'text-amber-600' : 'text-red-600';
+
+                    let html = `
+                        <div class="text-center mb-6">
+                            <div class="w-24 h-24 mx-auto rounded-full flex items-center justify-center ${score >= 80 ? 'bg-green-100' : score >= 60 ? 'bg-amber-100' : 'bg-red-100'}">
+                                <span class="text-4xl font-bold ${scoreColor}">${score}</span>
+                            </div>
+                            <p class="text-gray-500 mt-2">总匹配度</p>
+                        </div>
+                    `;
+
+                    if (result.gaps && result.gaps.length > 0) {
+                        html += `<div class="space-y-2"><h4 class="font-medium text-sm">改进建议：</h4>`;
+                        result.gaps.forEach(gap => {
+                            html += `<div class="p-2 bg-gray-100 rounded text-sm"><span class="font-medium">${gap.missing}</span> - ${gap.suggestion}</div>`;
+                        });
+                        html += `</div>`;
+                    }
+
+                    els.matchResult.innerHTML = html;
+                } else {
+                    els.matchResult.innerHTML = '<p class="text-red-500 text-center">匹配失败</p>';
+                }
+            })
+            .catch(err => {
+                console.error('匹配错误:', err);
+                els.matchResult.innerHTML = '<p class="text-red-500 text-center">匹配失败，请检查后端服务</p>';
+            })
+            .finally(() => {
+                els.btnMatch.disabled = false;
+                els.btnMatch.textContent = '开始匹配分析';
+            });
+        });
+    </script>
+</body>
+</html>
