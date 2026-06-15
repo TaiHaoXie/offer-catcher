@@ -2323,6 +2323,7 @@
                             </div>
                             <h4 class="text-[13px] font-semibold text-gemini-dark/82">等待一键优化</h4>
                             <p class="text-[11px] leading-7 max-w-[260px]">先完成一次匹配分析，再点击“一键优化”，这里会基于当前简历、JD 和分析结果生成定制版本。</p>
+                            <p class="text-[11px] leading-6 max-w-[260px] mt-2 px-3 py-2 rounded-lg bg-gemini-lavender/30 text-gemini-purple/90">💡 想让定制简历更贴岗位？可先到「<span class="font-semibold">经历原子库</span>」对关键经历点「针对当前 JD 改写表达」，再回来一键优化，导出会优先沿用你打磨过的表达。</p>
                         </div>
                     </div>
                     <div id="resume-edit-content" class="resume-lab-content hidden"></div>
@@ -3286,6 +3287,28 @@
                 // 记录解析得到的文本：文本层失败时由视觉 OCR 兜底恢复，
                 // 分析时优先用这份文本，避免把解析不出的原始 PDF 再丢给匹配引擎。
                 state.recoveredResumeText = (text && !garbled && charCount >= 60) ? text : '';
+
+                // 关键修复：上传文件解析出文本后，同步建一份正式简历并记录 resumeId，
+                // 让「经历原子库 - 从简历生成」可用（此前仅「粘贴文本」会生成 resumeId）。
+                if (text && !garbled && charCount >= 60) {
+                    try {
+                        const pr = await fetch(`${API_URL}/api/v1/resume/parse-text`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ text })
+                        });
+                        if (pr.ok) {
+                            const pd = await pr.json();
+                            if (pd && pd.success !== false) {
+                                state.resumeData = pd.data || state.resumeData;
+                                state.resumeId = pd.resume_id || pd.data?.id || state.resumeId;
+                                saveState();
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('上传文件建简历失败（不影响匹配分析）:', e);
+                    }
+                }
                 if (!previewHost) return;
 
                 // 解析可信度判定：字数过少或疑似乱码 → 提示改用粘贴文本
@@ -4117,6 +4140,7 @@
                 ${rewriteMarkup}
                 ${interviewMarkup}
                 <div class="mt-4 grid grid-cols-1 gap-2">
+                    <p class="text-[11px] leading-6 px-3 py-2 rounded-lg bg-gemini-lavender/30 text-gemini-purple/90">💡 想让定制简历更贴岗位？可先到「<span class="font-semibold">经历原子库</span>」对关键经历点「针对当前 JD 改写表达」，再回来点「一键优化」，导出会优先沿用你打磨过的表达。</p>
                     <button id="btn-generate-resume" class="py-2.5 bg-gradient-to-r from-gemini-purple to-gemini-pink text-white rounded-xl font-bold text-xs smooth-curve snd-hover snd-click">
                         一键优化
                     </button>
@@ -4545,7 +4569,8 @@
                         resume_text: resumeTextForCustomize || null,
                         jd_text: jdText,
                         match_result: state.lastMatchResult,
-                        atoms: []
+                        // 带上原子库里「针对该 JD 改写好的表达」，让导出用上改写成果
+                        atoms: (state.atoms || []).filter(a => a && a.meta && (a.meta.variants || []).length)
                     })
                 });
                 const data = await response.json();
@@ -5036,7 +5061,7 @@
 
         // 加载原子列表
         function loadAtoms() {
-            fetch(`${API_URL}/api/v1/atoms`)
+            fetch(`${API_URL}/api/v1/atoms`, { headers: authHeaders() })
                 .then(res => res.json())
                 .then(data => {
                     const atoms = data.data || [];
@@ -5171,6 +5196,7 @@
 
             fetch(`${API_URL}/api/v1/atoms/generate`, {
                 method: 'POST',
+                headers: authHeaders(),
                 body: formData
             })
             .then(res => res.json())
@@ -5200,6 +5226,7 @@
 
             fetch(`${API_URL}/api/v1/atoms`, {
                 method: 'POST',
+                headers: authHeaders(),
                 body: formData
             })
             .then(res => res.json())
@@ -5231,7 +5258,8 @@
             clearTimeout(pendingDeleteTimer);
 
             fetch(`${API_URL}/api/v1/atoms/${atomId}`, {
-                method: 'DELETE'
+                method: 'DELETE',
+                headers: authHeaders()
             })
             .then(res => res.json())
             .then(data => {
@@ -5262,7 +5290,7 @@
 
             fetch(`${API_URL}/api/v1/atoms/${atomId}/rewrite`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: authHeaders({ 'Content-Type': 'application/json' }),
                 body: JSON.stringify({ jd_text: jdText })
             })
             .then(res => res.json().then(data => ({ ok: res.ok, data })))
@@ -5331,9 +5359,9 @@
 
             fetch(`${API_URL}/api/v1/atoms`, {
                 method: 'POST',
-                headers: {
+                headers: authHeaders({
                     'Content-Type': 'application/json'
-                },
+                }),
                 body: JSON.stringify(payload)
             })
             .then(res => res.json())

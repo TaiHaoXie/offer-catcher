@@ -1063,11 +1063,13 @@ async def _build_customize_resume_with_ai(
     resume_text: str,
     jd_text: str,
     match_result: Dict[str, Any],
+    atom_refs: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """基于 AI 的定制简历改写：严格只允许基于原简历改写，不允许编造经历。
 
     复用 one_shot 引擎的 Kimi 配置；输出固定 JSON，便于前端稳定渲染与导出 PDF。
     失败时由调用方回退到规则版兜底。
+    atom_refs：用户在「经历原子库」里针对该 JD 改写好的表达，作为优先参考喂给模型。
     """
     from litellm import acompletion
 
@@ -1080,10 +1082,21 @@ async def _build_customize_resume_with_ai(
     matched_requirements = requirement_groups.get("matched", [])
     missing_requirements = requirement_groups.get("missing", [])
 
+    # 组织「原子库已优化表达」参考：用户已针对该 JD 改写过的经历 bullet，优先沿用
+    atom_ref_text = ""
+    for ref in (atom_refs or [])[:8]:
+        title = (ref.get("title") or "").strip()
+        bullets = ref.get("bullets") or []
+        bullets = [str(b).strip() for b in bullets if str(b).strip()]
+        if title and bullets:
+            atom_ref_text += f"\n- 【{title}】\n  " + "\n  ".join(bullets)
+
     # 控制 token：原简历过长时截断
     resume_text = (resume_text or "").strip()
     if len(resume_text) > 3500:
         resume_text = resume_text[:3500]
+
+    atom_ref_block = ("\n【已优化表达参考】（用户已针对该 JD 改写过的经历，请优先沿用）：" + atom_ref_text) if atom_ref_text else ""
 
     prompt = f"""你是一名资深简历顾问。请基于【原始简历】和【目标 JD】，生成一版更贴合该岗位的定制简历草稿。
 
@@ -1092,6 +1105,7 @@ async def _build_customize_resume_with_ai(
 2. 严禁编造任何简历里没有的公司、项目、数据、技能、奖项。
 3. 对原简历缺失、但 JD 需要的能力，不要硬写进经历，而是放进 do_not_fake 字段提醒用户。
 4. 改写要点：用“场景-动作-结果”结构，能量化就量化（但不能伪造数字）。
+5. 若提供了【已优化表达参考】，请优先沿用其中已经针对该 JD 打磨好的 bullet 表达（可微调措辞），但不得引入参考里凭空出现、原简历没有的事实。
 
 【目标 JD】
 {jd_text[:1500]}
@@ -1101,6 +1115,7 @@ async def _build_customize_resume_with_ai(
 
 【原始简历】
 {resume_text}
+{atom_ref_block}
 
 只输出合法 JSON，不要 Markdown、不要代码块、不要解释。字段如下：
 {{
@@ -1417,8 +1432,17 @@ async def customize_resume(request: CustomizeResumeRequest):
     # 2) 优先 AI 改写
     if resume_text:
         try:
+            # 从原子库提取「针对该 JD 改写好的表达」作为参考（meta.variants[0].bullets）
+            atom_refs = []
+            for atom in (request.atoms or []):
+                meta = atom.get("meta") or {}
+                variants = meta.get("variants") or []
+                if variants and isinstance(variants[0], dict):
+                    bullets = variants[0].get("bullets") or []
+                    if bullets:
+                        atom_refs.append({"title": atom.get("title", ""), "bullets": bullets})
             payload = await _build_customize_resume_with_ai(
-                resume_text, request.jd_text, request.match_result or {}
+                resume_text, request.jd_text, request.match_result or {}, atom_refs
             )
             return {"success": True, "data": payload, "message": "定制简历草稿生成完成"}
         except Exception as e:
@@ -1454,11 +1478,11 @@ async def get_history(limit: int = 20):
 # ========== 经历原子库接口 ==========
 
 @app.get("/api/v1/atoms")
-async def get_atoms():
-    """获取经历原子库"""
+async def get_atoms(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """获取经历原子库（仅当前登录用户自己的）"""
     db = get_db()
     try:
-        atoms = db.list_atoms()
+        atoms = db.list_atoms(user_id=current_user["id"])
         return {"success": True, "data": atoms, "count": len(atoms)}
     except Exception as e:
         logger.error(f"Failed to get atoms: {e}")
@@ -1466,8 +1490,8 @@ async def get_atoms():
 
 
 @app.post("/api/v1/atoms/generate")
-async def generate_atoms(resume_id: str = Form(...)):
-    """从指定简历生成经历原子并入库"""
+async def generate_atoms(resume_id: str = Form(...), current_user: Dict[str, Any] = Depends(get_current_user)):
+    """从指定简历生成经历原子并入库（归属当前登录用户）"""
     db = get_db()
     try:
         resume_data = db.get_resume(resume_id)
@@ -1477,7 +1501,7 @@ async def generate_atoms(resume_id: str = Form(...)):
         atoms = atom_generator.from_resume_data(resume_data)
         saved = []
         for atom in atoms:
-            atom_id = db.save_atom(atom)
+            atom_id = db.save_atom(atom, user_id=current_user["id"])
             saved.append({**atom, "id": atom_id})
 
         logger.info(f"Generated {len(saved)} atoms from resume {resume_id}")
@@ -1501,8 +1525,8 @@ def _normalize_skills(skills: Any) -> List[str]:
 
 
 @app.post("/api/v1/atoms")
-async def create_atom(request: Request):
-    """手动创建经历原子（兼容 FormData 与 JSON 两种提交方式）"""
+async def create_atom(request: Request, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """手动创建经历原子（兼容 FormData 与 JSON 两种提交方式，归属当前登录用户）"""
     db = get_db()
     try:
         content_type = request.headers.get("content-type", "")
@@ -1535,7 +1559,7 @@ async def create_atom(request: Request):
                 "variants": []
             }
         }
-        atom_id = db.save_atom(atom)
+        atom_id = db.save_atom(atom, user_id=current_user["id"])
         logger.info(f"Atom created: {atom_id}")
         return {"success": True, "data": {**atom, "id": atom_id}, "message": "经历原子创建成功"}
     except HTTPException:
@@ -1546,11 +1570,11 @@ async def create_atom(request: Request):
 
 
 @app.delete("/api/v1/atoms/{atom_id}")
-async def delete_atom(atom_id: str):
-    """删除经历原子"""
+async def delete_atom(atom_id: str, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """删除经历原子（仅能删当前登录用户自己的）"""
     db = get_db()
     try:
-        deleted = db.delete_atom(atom_id)
+        deleted = db.delete_atom(atom_id, user_id=current_user["id"])
         if not deleted:
             raise HTTPException(status_code=404, detail="经历原子不存在")
         logger.info(f"Atom deleted: {atom_id}")
@@ -1568,14 +1592,14 @@ class RewriteAtomRequest(BaseModel):
 
 
 @app.post("/api/v1/atoms/{atom_id}/rewrite")
-async def rewrite_atom_for_jd(atom_id: str, request: RewriteAtomRequest):
-    """针对目标 JD 重写经历原子的表达层，生成并保存一个改写版本(variant)"""
+async def rewrite_atom_for_jd(atom_id: str, request: RewriteAtomRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """针对目标 JD 重写经历原子的表达层，生成并保存一个改写版本(variant)。仅限本人原子。"""
     db = get_db()
     try:
         if not request.jd_text.strip():
             raise HTTPException(status_code=400, detail="请提供目标 JD 文本")
 
-        atom = db.get_atom(atom_id)
+        atom = db.get_atom(atom_id, user_id=current_user["id"])
         if not atom:
             raise HTTPException(status_code=404, detail="经历原子不存在")
 

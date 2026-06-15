@@ -154,6 +154,10 @@ class SQLiteDatabase:
         atom_cols = [row[1] for row in cursor.execute("PRAGMA table_info(atoms)").fetchall()]
         if "meta" not in atom_cols:
             cursor.execute("ALTER TABLE atoms ADD COLUMN meta TEXT")
+        # 迁移：为 atoms 增加 user_id 列，实现原子库按登录用户隔离（每人只看自己的）
+        if "user_id" not in atom_cols:
+            cursor.execute("ALTER TABLE atoms ADD COLUMN user_id TEXT")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_atoms_user ON atoms(user_id)")
 
         # 迁移：手机号登录改造。
         # - email 列复用为登录身份（存手机号），password_hash 不再使用（手机号+验证码登录）。
@@ -311,14 +315,14 @@ class SQLiteDatabase:
 
     # ========== 经历原子库 ==========
 
-    def save_atom(self, atom: Dict[str, Any]) -> str:
-        """保存经历原子"""
+    def save_atom(self, atom: Dict[str, Any], user_id: Optional[str] = None) -> str:
+        """保存经历原子（按登录用户隔离）"""
         atom_id = str(uuid.uuid4())
         conn = self._get_conn()
         try:
             conn.execute(
-                """INSERT INTO atoms (id, title, atom_type, description, company, skills, meta)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO atoms (id, title, atom_type, description, company, skills, meta, user_id)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     atom_id,
                     atom.get("title", ""),
@@ -326,7 +330,8 @@ class SQLiteDatabase:
                     atom.get("description", ""),
                     atom.get("company", ""),
                     json.dumps(atom.get("skills", []), ensure_ascii=False),
-                    json.dumps(atom.get("meta", {}), ensure_ascii=False)
+                    json.dumps(atom.get("meta", {}), ensure_ascii=False),
+                    user_id,
                 )
             )
             conn.commit()
@@ -337,15 +342,23 @@ class SQLiteDatabase:
         finally:
             conn.close()
 
-    def list_atoms(self) -> List[Dict[str, Any]]:
-        """获取所有经历原子"""
+    def list_atoms(self, user_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """获取经历原子（传 user_id 则只返回该用户的）"""
         conn = self._get_conn()
         try:
-            cursor = conn.execute(
-                """SELECT id, title, atom_type, description, company, skills, meta, created_at
-                   FROM atoms
-                   ORDER BY created_at DESC"""
-            )
+            if user_id is not None:
+                cursor = conn.execute(
+                    """SELECT id, title, atom_type, description, company, skills, meta, created_at
+                       FROM atoms WHERE user_id = ?
+                       ORDER BY created_at DESC""",
+                    (user_id,)
+                )
+            else:
+                cursor = conn.execute(
+                    """SELECT id, title, atom_type, description, company, skills, meta, created_at
+                       FROM atoms
+                       ORDER BY created_at DESC"""
+                )
             return [
                 {
                     "id": row["id"],
@@ -362,15 +375,22 @@ class SQLiteDatabase:
         finally:
             conn.close()
 
-    def get_atom(self, atom_id: str) -> Optional[Dict[str, Any]]:
-        """获取单个经历原子"""
+    def get_atom(self, atom_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """获取单个经历原子（传 user_id 则限定只能取该用户自己的）"""
         conn = self._get_conn()
         try:
-            row = conn.execute(
-                """SELECT id, title, atom_type, description, company, skills, meta, created_at
-                   FROM atoms WHERE id = ?""",
-                (atom_id,)
-            ).fetchone()
+            if user_id is not None:
+                row = conn.execute(
+                    """SELECT id, title, atom_type, description, company, skills, meta, created_at
+                       FROM atoms WHERE id = ? AND user_id = ?""",
+                    (atom_id, user_id)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    """SELECT id, title, atom_type, description, company, skills, meta, created_at
+                       FROM atoms WHERE id = ?""",
+                    (atom_id,)
+                ).fetchone()
             if not row:
                 return None
             return {
@@ -399,14 +419,20 @@ class SQLiteDatabase:
         finally:
             conn.close()
 
-    def delete_atom(self, atom_id: str) -> bool:
-        """删除经历原子"""
+    def delete_atom(self, atom_id: str, user_id: Optional[str] = None) -> bool:
+        """删除经历原子（传 user_id 则限定只能删该用户自己的）"""
         conn = self._get_conn()
         try:
-            cursor = conn.execute(
-                "DELETE FROM atoms WHERE id = ?",
-                (atom_id,)
-            )
+            if user_id is not None:
+                cursor = conn.execute(
+                    "DELETE FROM atoms WHERE id = ? AND user_id = ?",
+                    (atom_id, user_id)
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM atoms WHERE id = ?",
+                    (atom_id,)
+                )
             conn.commit()
             return cursor.rowcount > 0
         finally:
