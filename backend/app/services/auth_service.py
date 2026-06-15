@@ -38,7 +38,7 @@ class AuthService:
     def __init__(self):
         self.jwt_secret = os.getenv("JWT_SECRET", "dev-secret-change-me")
         # 普通用户首次登录赠送的可用次数
-        self.free_quota = int(os.getenv("FREE_QUOTA_ON_SIGNUP", "1"))
+        self.free_quota = int(os.getenv("FREE_QUOTA_ON_SIGNUP", "3"))
         self.owner_phone = OWNER_PHONE
         # 解析为集合，支持逗号分隔的多个站长号
         self.owner_phones = {p.strip() for p in OWNER_PHONE.split(",") if p.strip()}
@@ -51,7 +51,7 @@ class AuthService:
 
         - 验证码必须等于通用验证码（不区分大小写）。
         - 站长本人手机号 → 无限次。
-        - 其他手机号 → 首次登录赠送 free_quota 次（默认 1 次完整流程）。
+        - 其他手机号 → 首次登录赠送 free_quota 次（默认 3 次完整流程）。
         """
         phone = (phone or "").strip()
         code = (code or "").strip()
