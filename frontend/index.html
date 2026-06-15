@@ -183,24 +183,26 @@
             line-height: 1.8;
             color: rgba(42,46,51,0.56);
         }
-        .workspace-stack {
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            min-width: 0;
-        }
         .workspace-shell {
             min-height: 620px;
         }
-        /* 左侧输入(简历+JD) 约28% + 右侧匹配区 的两栏布局 */
+        /* 上下两段：上方输入区（简历+JD 各 50%），下方分析结果全宽 */
         .workspace-split {
-            display: grid !important;
-            grid-template-columns: minmax(260px, 28%) minmax(0, 1fr);
+            display: flex !important;
+            flex-direction: column;
             gap: 20px;
-            align-items: start;
+            align-items: stretch;
+        }
+        /* 输入区内部：简历上传 + 岗位 JD 各占一半，等高 */
+        .workspace-stack {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+            min-width: 0;
+            align-items: stretch;
         }
         @media (max-width: 680px) {
-            .workspace-split {
+            .workspace-stack {
                 grid-template-columns: 1fr;
             }
         }
@@ -887,6 +889,92 @@
             border: 1px solid rgba(255,255,255,0.86);
             box-shadow: 0 26px 48px -40px rgba(42,46,51,0.24);
         }
+        /* 真实简历文档样式（所见即所得，对应导出 PDF） */
+        .resume-paper {
+            background: #ffffff;
+            border: 1px solid rgba(226,232,240,0.9);
+            border-radius: 18px;
+            padding: 28px 30px;
+            box-shadow: 0 26px 52px -42px rgba(42,46,51,0.28);
+            color: #1f2937;
+        }
+        .resume-paper-head {
+            border-bottom: 2px solid #1f2937;
+            padding-bottom: 12px;
+            margin-bottom: 16px;
+        }
+        .resume-paper-name {
+            font-size: 22px;
+            font-weight: 800;
+            color: #111827;
+            line-height: 1.2;
+        }
+        .resume-paper-contact {
+            font-size: 11px;
+            color: #6b7280;
+            margin-top: 6px;
+        }
+        .resume-paper-headline {
+            font-size: 12px;
+            color: #4b5563;
+            margin-top: 8px;
+            font-weight: 600;
+        }
+        .resume-paper-section { margin-top: 16px; }
+        .resume-paper-h2 {
+            font-size: 13px;
+            font-weight: 700;
+            color: #111827;
+            border-bottom: 1px solid #e5e7eb;
+            padding-bottom: 4px;
+            margin-bottom: 8px;
+        }
+        .resume-paper-summary {
+            font-size: 12px;
+            line-height: 1.8;
+            color: #374151;
+        }
+        .resume-paper-skills { display: flex; flex-wrap: wrap; gap: 6px; }
+        .resume-paper-skill {
+            font-size: 11px;
+            color: #374151;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            padding: 2px 8px;
+        }
+        .resume-paper-exp { margin-bottom: 4px; }
+        .resume-paper-exp-head {
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .resume-paper-exp-title { font-size: 13px; font-weight: 700; color: #1f2937; }
+        .resume-paper-exp-meta { font-size: 11px; color: #6b7280; flex-shrink: 0; }
+        .resume-paper-bullets {
+            margin: 6px 0 0 18px;
+            list-style: disc;
+        }
+        .resume-paper-bullets li {
+            font-size: 12px;
+            line-height: 1.75;
+            color: #374151;
+            margin-bottom: 3px;
+        }
+        .resume-aux {
+            border: 1px solid rgba(232,236,242,0.9);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.7);
+            padding: 10px 14px;
+        }
+        .resume-aux-summary {
+            font-size: 11px;
+            font-weight: 700;
+            color: rgba(42,46,51,0.62);
+            cursor: pointer;
+        }
+        .resume-aux-body { margin-top: 12px; }
+
         .resume-draft-kicker {
             font-size: 9px;
             line-height: 1;
@@ -931,67 +1019,26 @@
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            gap: 16px;
-            min-height: 240px;
+            gap: 14px;
+            width: 100%;
+            min-height: 220px;
+            margin: auto 0;
             animation: catLoaderIn 0.5s ease-out both;
         }
         @keyframes catLoaderIn {
             from { opacity: 0; transform: translateY(6px); }
             to   { opacity: 1; transform: translateY(0); }
         }
-        .cat-loader {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 14px;
-            width: 100%;
-        }
-        .cat-loader-stage {
-            position: relative;
-            width: 140px;
-            height: 110px;
-            display: flex;
-            align-items: flex-end;
-            justify-content: center;
-            margin: 0 auto;
-        }
-        .cat-loader-image {
-            width: 132px;
-            height: auto;
-            display: block;
-            transform-origin: 50% 100%;
-            animation: catWalk 3.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
-            will-change: transform;
-        }
-        .cat-loader-shadow {
-            position: absolute;
-            bottom: -2px;
-            left: 50%;
-            width: 96px;
-            height: 14px;
-            transform: translateX(-50%);
-            background: radial-gradient(ellipse at center, rgba(120,104,134,0.28) 0%, rgba(120,104,134,0) 70%);
+        .cat-loader-spinner {
+            width: 38px;
+            height: 38px;
             border-radius: 50%;
-            animation: catShadow 3.4s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+            border: 3px solid rgba(150,123,182,0.18);
+            border-top-color: rgba(150,123,182,0.85);
+            animation: catSpin 0.9s linear infinite;
         }
-        .cat-loader-dots {
-            display: flex;
-            align-items: center;
-            gap: 5px;
-        }
-        .cat-loader-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 999px;
-            background: rgba(209,190,207,0.9);
-            animation: catPulse 1.2s ease-in-out infinite;
-        }
-        .cat-loader-dot:nth-child(2) {
-            animation-delay: 0.15s;
-        }
-        .cat-loader-dot:nth-child(3) {
-            animation-delay: 0.3s;
+        @keyframes catSpin {
+            to { transform: rotate(360deg); }
         }
         .cat-loader-status {
             font-size: 15px;
@@ -1002,29 +1049,11 @@
         .cat-loader-status.is-done {
             color: rgba(70,136,94,0.9);
         }
-        @keyframes catWalk {
-            0%   { transform: translateY(0) scale(1, 1); }
-            30%  { transform: translateY(-7px) scale(0.985, 1.02); }
-            60%  { transform: translateY(0) scale(1.02, 0.98); }
-            100% { transform: translateY(0) scale(1, 1); }
-        }
-        @keyframes catShadow {
-            0%   { transform: translateX(-50%) scaleX(1); opacity: 0.85; }
-            30%  { transform: translateX(-50%) scaleX(0.78); opacity: 0.5; }
-            60%  { transform: translateX(-50%) scaleX(1.04); opacity: 0.9; }
-            100% { transform: translateX(-50%) scaleX(1); opacity: 0.85; }
-        }
-        @keyframes catTail {
-            0%, 100% { transform: rotate(20deg); }
-            50% { transform: rotate(40deg); }
-        }
-        @keyframes catBlink {
-            0%, 44%, 100% { transform: scaleY(1); }
-            46%, 50% { transform: scaleY(0.15); }
-        }
-        @keyframes catPulse {
-            0%, 100% { opacity: 0.35; transform: scale(0.9); }
-            50% { opacity: 1; transform: scale(1); }
+        .cat-loader-timer {
+            font-size: 12px;
+            line-height: 1.5;
+            color: rgba(42,46,51,0.45);
+            font-variant-numeric: tabular-nums;
         }
         .jd-review-shell {
             padding: 18px;
@@ -1542,6 +1571,98 @@
             line-height: 1;
             font-weight: 600;
         }
+        /* 事实层（锁定） */
+        .atom-fact-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 6px;
+            margin: 4px 0 8px;
+        }
+        .atom-fact-lock {
+            font-size: 10px;
+            font-weight: 700;
+            color: rgba(42,46,51,0.5);
+            background: rgba(226,232,240,0.7);
+            border-radius: 999px;
+            padding: 3px 8px;
+        }
+        .atom-fact-chip {
+            font-size: 10px;
+            font-weight: 600;
+            color: rgba(42,46,51,0.62);
+            background: rgba(245,243,248,0.9);
+            border: 1px dashed rgba(42,46,51,0.16);
+            border-radius: 999px;
+            padding: 3px 8px;
+        }
+        .atom-highlight {
+            font-size: 12px;
+            font-weight: 700;
+            color: #7c3aed;
+            margin: 2px 0 6px;
+        }
+        /* 表达层 JD 改写版本 */
+        .atom-variant {
+            margin-top: 10px;
+            padding: 10px 12px;
+            border-radius: 14px;
+            background: linear-gradient(180deg, rgba(124,58,237,0.06), rgba(59,130,246,0.05));
+            border: 1px solid rgba(124,58,237,0.18);
+        }
+        .atom-variant-head {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 6px;
+            flex-wrap: wrap;
+        }
+        .atom-variant-tag {
+            font-size: 10px;
+            font-weight: 700;
+            color: #fff;
+            background: #7c3aed;
+            border-radius: 999px;
+            padding: 3px 9px;
+        }
+        .atom-variant-emphasis {
+            font-size: 10px;
+            color: rgba(42,46,51,0.55);
+        }
+        .atom-variant-list {
+            margin: 0;
+            padding-left: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .atom-variant-list li {
+            font-size: 12px;
+            line-height: 1.55;
+            color: rgba(42,46,51,0.78);
+            list-style: disc;
+        }
+        .atom-actions {
+            margin-top: 10px;
+        }
+        .atom-rewrite-btn {
+            font-size: 11px;
+            font-weight: 700;
+            color: #6d28d9;
+            background: rgba(124,58,237,0.1);
+            border: 1px solid rgba(124,58,237,0.25);
+            border-radius: 999px;
+            padding: 6px 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .atom-rewrite-btn:hover:not(:disabled) {
+            background: rgba(124,58,237,0.18);
+        }
+        .atom-rewrite-btn:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
         .atom-delete-btn {
             width: 30px;
             height: 30px;
@@ -1947,7 +2068,7 @@
                         匹配工作台
                     </span>
                 </button>
-                <button id="tab-atoms" class="hidden flex-1 md:flex-none px-4 md:px-5 py-2 rounded-full font-medium text-[11px] smooth-curve text-gemini-dark/40 hover:text-gemini-dark/70 active:scale-95 snd-hover snd-click whitespace-nowrap">
+                <button id="tab-atoms" class="flex-1 md:flex-none px-4 md:px-5 py-2 rounded-full font-medium text-[11px] smooth-curve text-gemini-dark/40 hover:text-gemini-dark/70 active:scale-95 snd-hover snd-click whitespace-nowrap">
                     <span class="flex items-center gap-2">
                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
                         经历原子库
@@ -1974,7 +2095,7 @@
             <div id="workspace-view" class="view-pane active-pane animate-in three-col-pane mb-6 md:mb-8 workspace-shell">
             <div class="workspace-split">
                 <section id="workspace-input-state" class="workspace-stack">
-                    <div class="bg-white/50 backdrop-blur-xl rounded-gemini-card p-4 md:p-5 border border-white/60 flex flex-col justify-between group smooth-curve hover:bg-white/70 hover:shadow-aurora min-h-[190px] md:min-h-[210px]">
+                    <div class="bg-white/50 backdrop-blur-xl rounded-gemini-card p-4 md:p-5 border border-white/60 flex flex-col group smooth-curve hover:bg-white/70 hover:shadow-aurora h-full min-h-[240px] md:min-h-[260px]">
                         <div class="flex items-center justify-between mb-3">
                             <div class="flex items-center gap-3">
                                 <div class="w-7 h-7 bg-gemini-blue/30 text-gemini-dark/70 rounded-full flex items-center justify-center">
@@ -1987,9 +2108,9 @@
                             </div>
                             <button id="toggle-resume-mode" class="text-[10px] bg-white hover:bg-gemini-lavender text-gemini-dark/70 px-2.5 md:px-3 py-1.5 rounded-full border border-white/80 shadow-sm smooth-curve active:scale-95 font-semibold snd-hover snd-click whitespace-nowrap">📝 粘贴文本</button>
                         </div>
-                        <div id="resume-file-mode" class="relative">
+                        <div id="resume-file-mode" class="relative flex-1 flex flex-col">
                             <input type="file" id="resume-file-input" accept=".pdf,.docx,.txt" class="hidden"/>
-                            <div id="resume-drop-zone" class="border border-dashed border-gemini-blue/60 rounded-2xl p-4 md:p-5 text-center smooth-curve hover:border-gemini-purple hover:bg-white/60 cursor-pointer flex flex-col items-center justify-center group/drop min-h-[96px] md:min-h-[102px]">
+                            <div id="resume-drop-zone" class="border border-dashed border-gemini-blue/60 rounded-2xl p-4 md:p-5 text-center smooth-curve hover:border-gemini-purple hover:bg-white/60 cursor-pointer flex flex-col items-center justify-center group/drop flex-1 min-h-[96px] md:min-h-[102px]">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gemini-blue mb-1.5 transition-transform duration-500 group-hover/drop:scale-110"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" x2="12" y1="3" y2="15"></line></svg>
                                 <span class="text-gemini-dark/80 font-bold text-xs">点击上传或拖拽文件</span>
                                 <span class="text-[10px] text-gemini-dark/30 font-light mt-0.5">支持 PDF、DOCX 格式</span>
@@ -2009,7 +2130,7 @@
                         <div id="resume-parse-preview" class="hidden mt-2"></div>
                     </div>
 
-                    <div class="bg-white/50 backdrop-blur-xl rounded-gemini-card p-4 md:p-5 border border-white/60 flex flex-col gap-3 group smooth-curve hover:bg-white/70 hover:shadow-aurora min-h-[320px] md:min-h-[360px]">
+                    <div class="bg-white/50 backdrop-blur-xl rounded-gemini-card p-4 md:p-5 border border-white/60 flex flex-col gap-3 group smooth-curve hover:bg-white/70 hover:shadow-aurora h-full min-h-[240px] md:min-h-[260px]">
                         <div class="flex items-center gap-3">
                             <div class="w-7 h-7 bg-gemini-purple/30 text-gemini-dark/70 rounded-full flex items-center justify-center">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" x2="8" y1="13" y2="13"></line><line x1="16" x2="8" y1="17" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
@@ -2032,7 +2153,7 @@
 要求：
 1. 硕士及以上学历
 2. 了解AI/LLM技术原理
-3. 有产品思维和数据分析能力" class="w-full bg-white/60 border border-gemini-dark/10 rounded-xl p-3 text-[12px] text-gemini-dark focus:outline-none focus:border-gemini-purple resize-none h-[220px] md:h-[272px] leading-relaxed"></textarea>
+3. 有产品思维和数据分析能力" class="w-full bg-white/60 border border-gemini-dark/10 rounded-xl p-3 text-[12px] text-gemini-dark focus:outline-none focus:border-gemini-purple resize-none flex-1 min-h-[140px] leading-relaxed"></textarea>
                         <div class="flex gap-2">
                             <button id="btn-match" class="flex-1 py-2 bg-gemini-dark text-white/90 disabled:bg-gemini-dark/10 disabled:text-gemini-dark/20 rounded-xl font-bold text-xs smooth-curve disabled:cursor-not-allowed" disabled>开始匹配分析</button>
                         </div>
@@ -2059,20 +2180,11 @@
                     <h4 class="text-[11px] font-bold text-gemini-dark/80 tracking-[0.18em] mt-5 mb-1.5 uppercase">等待匹配分析</h4>
                     <p class="text-[11px] text-warm-400 font-light max-w-[240px] leading-relaxed">左侧准备好简历与 JD 后，在这里查看实时分析结果</p>
                         </div>
-                        <div id="result-loading" class="hidden my-auto relative z-10 w-full flex flex-col items-center justify-center py-6 md:py-8">
+                        <div id="result-loading" class="hidden my-auto relative z-10 w-full flex-1 flex flex-col items-center justify-center py-6 md:py-8">
                     <div class="cat-loader-shell">
-                        <div class="cat-loader" aria-hidden="true">
-                            <div class="cat-loader-stage">
-                                <img class="cat-loader-image" src="./assets/cat-outline.png" alt="小猫加载中" />
-                                <div class="cat-loader-shadow"></div>
-                            </div>
-                            <div class="cat-loader-dots">
-                                <span class="cat-loader-dot"></span>
-                                <span class="cat-loader-dot"></span>
-                                <span class="cat-loader-dot"></span>
-                            </div>
-                        </div>
+                        <div class="cat-loader-spinner" aria-hidden="true"></div>
                         <div id="loading-status" class="cat-loader-status">分析中...</div>
+                        <div id="loading-timer" class="cat-loader-timer">预计用时约 25s · 已用 0s</div>
                     </div>
                         </div>
                         <div id="result-content" class="hidden relative z-10 w-full text-left flex-1 flex flex-col h-full">
@@ -2127,7 +2239,6 @@
                             <div>
                                 <div class="atoms-kicker">Experience Library</div>
                                 <h3 class="atoms-hero-title mt-1">经历原子库</h3>
-                                <p class="atoms-hero-copy">把简历里的项目、实习、教育与获奖拆成可复用原子，方便你后续快速重组经历表达。</p>
                             </div>
                             <button id="btn-generate-atoms" class="atom-secondary-btn smooth-curve snd-hover snd-click">
                                 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"></path><path d="m8 11 4 4 4-4"></path><path d="M4 19h16"></path></svg>
@@ -2157,10 +2268,14 @@
                             <div class="atom-form-field">
                                 <label>类型</label>
                                 <select id="atom-type">
-                                    <option value="work">工作/实习经历</option>
+                                    <option value="work">工作经历</option>
+                                    <option value="intern">实习经历</option>
                                     <option value="project">项目经历</option>
-                                    <option value="education">教育背景</option>
+                                    <option value="campus">校园经历</option>
                                     <option value="award">获奖经历</option>
+                                    <option value="interest">兴趣 / 用户视角</option>
+                                    <option value="education">教育背景</option>
+                                    <option value="skills">技能</option>
                                 </select>
                             </div>
                             <div class="atom-form-field">
@@ -2279,8 +2394,17 @@
             lastGeneratedResume: null,
             atoms: [],
             workspaceMode: 'input',
-            useFixedResume: false
+            useFixedResume: false,
+            currentUser: null
         };
+
+        // ===== 鉴权 / token 管理 =====
+        function getToken() { return localStorage.getItem('oc_token'); }
+        function setToken(t) { if (t) localStorage.setItem('oc_token', t); else localStorage.removeItem('oc_token'); }
+        function authHeaders(extra = {}) {
+            const t = getToken();
+            return t ? { ...extra, 'Authorization': 'Bearer ' + t } : extra;
+        }
 
         // 声效系统
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -2349,6 +2473,312 @@
                 toast.style.transform = 'translate(-50%, -10px)';
                 setTimeout(() => toast.remove(), 300);
             }, 3000);
+        }
+
+        // ===================== 账号 / 鉴权 UI =====================
+        let authMode = 'login';
+
+        // ---- header 账号区 ----
+        function renderAuthState() {
+            // 账号区放在 header 顶栏（始终可见），而非 hidden md:flex 的 nav 里，
+            // 否则窄屏/单栏布局下登录入口会被隐藏。
+            const bar = document.querySelector('header > div') || document.querySelector('header');
+            if (!bar) return;
+            let box = document.getElementById('oc-account-box');
+            if (!box) {
+                box = document.createElement('div');
+                box.id = 'oc-account-box';
+                box.className = 'flex items-center gap-2 ml-auto';
+                bar.appendChild(box);
+            }
+            const u = state.currentUser;
+            if (u) {
+                const phone = u.phone || u.email || '';
+                const phoneMasked = phone.length === 11 ? phone.slice(0, 3) + '****' + phone.slice(7) : phone;
+                const quotaChip = u.is_unlimited
+                    ? `<span class="px-3 py-1 rounded-full bg-gradient-to-r from-gemini-purple/15 to-gemini-pink/15 text-gemini-purple text-[11px] font-semibold">无限次</span>`
+                    : `<span class="px-3 py-1 rounded-full bg-gradient-to-r from-gemini-purple/15 to-gemini-pink/15 text-gemini-purple text-[11px] font-semibold">剩余 ${u.remaining_quota} 次</span>`;
+                box.innerHTML = `
+                    <span class="px-3 py-1 rounded-full bg-gemini-lavender/60 text-gemini-dark/80 text-[11px] font-medium" title="${phone}">${phoneMasked}</span>
+                    ${quotaChip}
+                    ${u.is_unlimited ? '' : `<button id="oc-btn-upgrade" class="px-3 py-1 rounded-full bg-white/70 border border-white/60 text-gemini-dark/70 text-[11px] hover:text-gemini-dark smooth-curve active:scale-95">获取更多次数</button>`}
+                    <button id="oc-btn-logout" class="px-3 py-1 rounded-full text-gemini-dark/40 hover:text-gemini-dark text-[11px] smooth-curve active:scale-95">退出</button>
+                `;
+                const upgradeBtn = box.querySelector('#oc-btn-upgrade');
+                if (upgradeBtn) upgradeBtn.addEventListener('click', openUpgradeModal);
+                box.querySelector('#oc-btn-logout').addEventListener('click', () => {
+                    setToken(null);
+                    state.currentUser = null;
+                    renderAuthState();
+                    showJobMessage('已退出登录', 'info');
+                });
+            } else {
+                box.innerHTML = `
+                    <button id="oc-btn-login" class="px-4 py-1.5 rounded-full bg-gradient-to-r from-gemini-purple to-gemini-pink text-white text-[11px] font-semibold shadow-sm hover:opacity-90 smooth-curve active:scale-95">登录 / 注册</button>
+                `;
+                box.querySelector('#oc-btn-login').addEventListener('click', () => openAuthModal('login'));
+            }
+        }
+
+        // ---- 手机号 + 验证码 登录模态 ----
+        function buildAuthModal() {
+            if (document.getElementById('oc-auth-modal')) return;
+            const wrap = document.createElement('div');
+            wrap.id = 'oc-auth-modal';
+            wrap.className = 'fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center hidden';
+            wrap.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-2xl w-[90%] max-w-sm p-7 relative">
+                    <button id="oc-auth-close" class="absolute top-4 right-4 text-gemini-dark/30 hover:text-gemini-dark text-lg leading-none">×</button>
+                    <h3 class="text-lg font-bold text-gemini-dark mb-1">手机号登录</h3>
+                    <p class="text-[11px] text-gemini-dark/40 mb-5">输入手机号与验证码即可开始，未注册将自动创建账号</p>
+                    <div class="space-y-3">
+                        <input id="oc-auth-phone" type="tel" inputmode="numeric" maxlength="11" placeholder="手机号" class="w-full px-4 py-2.5 rounded-xl border border-gemini-dark/10 bg-gemini-lavender/20 text-sm outline-none focus:border-gemini-purple/50 smooth-curve" />
+                        <input id="oc-auth-code" type="text" placeholder="验证码" class="w-full px-4 py-2.5 rounded-xl border border-gemini-dark/10 bg-gemini-lavender/20 text-sm outline-none focus:border-gemini-purple/50 smooth-curve" />
+                    </div>
+                    <button id="oc-auth-submit" class="w-full mt-5 py-2.5 rounded-xl bg-gradient-to-r from-gemini-purple to-gemini-pink text-white text-sm font-semibold shadow-sm hover:opacity-90 smooth-curve active:scale-95">登录 / 注册</button>
+                    <p class="text-center text-[11px] text-gemini-dark/35 mt-4">没有验证码？向站长领取后即可体验一次完整流程</p>
+                </div>
+            `;
+            document.body.appendChild(wrap);
+            wrap.querySelector('#oc-auth-close').addEventListener('click', closeAuthModal);
+            wrap.addEventListener('click', (e) => { if (e.target === wrap) closeAuthModal(); });
+            wrap.querySelector('#oc-auth-submit').addEventListener('click', submitAuth);
+            wrap.querySelector('#oc-auth-code').addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') submitAuth();
+            });
+        }
+
+        function openAuthModal() {
+            buildAuthModal();
+            document.getElementById('oc-auth-modal').classList.remove('hidden');
+        }
+        function closeAuthModal() {
+            const m = document.getElementById('oc-auth-modal');
+            if (m) m.classList.add('hidden');
+        }
+
+        async function submitAuth() {
+            const phone = (document.getElementById('oc-auth-phone').value || '').trim();
+            const code = (document.getElementById('oc-auth-code').value || '').trim();
+            if (!/^1[3-9]\d{9}$/.test(phone)) {
+                showJobMessage('请输入有效的手机号', 'error');
+                return;
+            }
+            if (!code) {
+                showJobMessage('请输入验证码', 'error');
+                return;
+            }
+            const submitBtn = document.getElementById('oc-auth-submit');
+            submitBtn.disabled = true;
+            const originalText = submitBtn.textContent;
+            submitBtn.textContent = '处理中...';
+            try {
+                const res = await fetch(`${API_URL}/api/v1/auth/login`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone, code })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showJobMessage(data.detail || '登录失败，请重试', 'error');
+                    return;
+                }
+                setToken(data.token);
+                state.currentUser = data.user;
+                closeAuthModal();
+                renderAuthState();
+                showJobMessage('登录成功', 'success');
+                if (data.user && !data.user.seen_onboarding) {
+                    maybeShowOnboarding();
+                }
+            } catch (e) {
+                showJobMessage('网络异常，请稍后再试', 'error');
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalText;
+            }
+        }
+
+        async function restoreSession() {
+            if (!getToken()) {
+                renderAuthState();
+                return;
+            }
+            try {
+                const res = await fetch(`${API_URL}/api/v1/auth/me`, { headers: authHeaders() });
+                if (res.status === 401) {
+                    setToken(null);
+                    state.currentUser = null;
+                    renderAuthState();
+                    return;
+                }
+                const data = await res.json().catch(() => ({}));
+                if (res.ok && data.user) {
+                    state.currentUser = data.user;
+                    renderAuthState();
+                    if (!data.user.seen_onboarding) maybeShowOnboarding();
+                }
+            } catch (e) {
+                // 网络异常时保持本地 token，等下次再恢复
+            }
+        }
+
+        // ===================== Onboarding 引导 =====================
+        function maybeShowOnboarding() {
+            if (state.currentUser && !state.currentUser.seen_onboarding) showOnboarding();
+        }
+
+        function showOnboarding() {
+            if (document.getElementById('oc-onboarding')) return;
+            const wrap = document.createElement('div');
+            wrap.id = 'oc-onboarding';
+            wrap.className = 'fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center';
+            wrap.innerHTML = `
+                <div class="bg-white rounded-2xl shadow-2xl w-[90%] max-w-md p-7 text-center">
+                    <h3 class="text-lg font-bold text-gemini-dark mb-1">三步开始匹配</h3>
+                    <p class="text-[11px] text-gemini-dark/40 mb-6">欢迎使用 Offer 捕手</p>
+                    <div class="space-y-4 text-left mb-6">
+                        <div class="flex items-start gap-3">
+                            <span class="w-7 h-7 shrink-0 rounded-full bg-gemini-purple/15 text-gemini-purple flex items-center justify-center text-sm font-bold">1</span>
+                            <div><p class="text-sm font-medium text-gemini-dark">上传简历</p><p class="text-[11px] text-gemini-dark/40">支持上传文件或直接粘贴文本</p></div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <span class="w-7 h-7 shrink-0 rounded-full bg-gemini-pink/15 text-gemini-pink flex items-center justify-center text-sm font-bold">2</span>
+                            <div><p class="text-sm font-medium text-gemini-dark">粘贴 JD</p><p class="text-[11px] text-gemini-dark/40">填入目标岗位的职位描述</p></div>
+                        </div>
+                        <div class="flex items-start gap-3">
+                            <span class="w-7 h-7 shrink-0 rounded-full bg-gemini-blue/15 text-gemini-blue flex items-center justify-center text-sm font-bold">3</span>
+                            <div><p class="text-sm font-medium text-gemini-dark">查看匹配结果</p><p class="text-[11px] text-gemini-dark/40">获取匹配度评分与优化建议</p></div>
+                        </div>
+                    </div>
+                    <div class="flex gap-3">
+                        <button id="oc-onboard-skip" class="flex-1 py-2.5 rounded-xl border border-gemini-dark/10 text-gemini-dark/50 text-sm hover:text-gemini-dark smooth-curve active:scale-95">跳过</button>
+                        <button id="oc-onboard-start" class="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-gemini-purple to-gemini-pink text-white text-sm font-semibold shadow-sm hover:opacity-90 smooth-curve active:scale-95">开始体验</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(wrap);
+            wrap.querySelector('#oc-onboard-skip').addEventListener('click', finishOnboarding);
+            wrap.querySelector('#oc-onboard-start').addEventListener('click', finishOnboarding);
+        }
+
+        async function finishOnboarding() {
+            const m = document.getElementById('oc-onboarding');
+            if (m) m.remove();
+            if (state.currentUser) state.currentUser.seen_onboarding = true;
+            try {
+                await fetch(`${API_URL}/api/v1/auth/onboarding-done`, {
+                    method: 'POST',
+                    headers: authHeaders()
+                });
+            } catch (e) {}
+        }
+
+        // ===================== 邀请码 / 付费占位 =====================
+        async function redeemInvite(code, btn) {
+            code = (code || '').trim();
+            if (!code) {
+                showJobMessage('请输入邀请码', 'error');
+                return;
+            }
+            if (btn) { btn.disabled = true; }
+            try {
+                const res = await fetch(`${API_URL}/api/v1/invite/redeem`, {
+                    method: 'POST',
+                    headers: authHeaders({ 'Content-Type': 'application/json' }),
+                    body: JSON.stringify({ code })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showJobMessage(data.detail || '兑换失败', 'error');
+                    return;
+                }
+                if (state.currentUser) state.currentUser.remaining_quota = data.remaining_quota;
+                renderAuthState();
+                showJobMessage('兑换成功，+' + data.granted + ' 次', 'success');
+                closeUpgradeModal();
+            } catch (e) {
+                showJobMessage('网络异常，请稍后再试', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function closeUpgradeModal() {
+            const m = document.getElementById('oc-upgrade-modal');
+            if (m) m.classList.add('hidden');
+        }
+
+        async function claimShareReward(btn) {
+            const shareUrl = window.location.origin + window.location.pathname;
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(shareUrl);
+                }
+            } catch (e) {}
+            if (btn) btn.disabled = true;
+            try {
+                const res = await fetch(`${API_URL}/api/v1/share/claim`, {
+                    method: 'POST',
+                    headers: authHeaders({ 'Content-Type': 'application/json' })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) {
+                    showJobMessage(data.detail || '领取失败', 'error');
+                    return;
+                }
+                if (state.currentUser) state.currentUser.remaining_quota = data.remaining_quota;
+                renderAuthState();
+                showJobMessage('链接已复制，去分享给微信好友吧！已 +' + data.granted + ' 次', 'success');
+                closeUpgradeModal();
+            } catch (e) {
+                showJobMessage('网络异常，请稍后再试', 'error');
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
+        function openUpgradeModal() {
+            let wrap = document.getElementById('oc-upgrade-modal');
+            if (!wrap) {
+                wrap = document.createElement('div');
+                wrap.id = 'oc-upgrade-modal';
+                wrap.className = 'fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center hidden';
+                wrap.innerHTML = `
+                    <div class="bg-white rounded-2xl shadow-2xl w-[90%] max-w-md p-7 relative">
+                        <button id="oc-upgrade-close" class="absolute top-4 right-4 text-gemini-dark/30 hover:text-gemini-dark text-lg leading-none">×</button>
+                        <h3 class="text-lg font-bold text-gemini-dark mb-1">获取更多次数</h3>
+                        <p class="text-[11px] text-gemini-dark/40 mb-5">当前为体验阶段，暂未开放在线支付；可输入邀请码免费体验，或联系我们开通。</p>
+                        <div class="space-y-2.5 mb-5">
+                            <div class="flex items-center justify-between px-4 py-3 rounded-xl border border-gemini-dark/10 bg-gemini-lavender/20">
+                                <div><p class="text-sm font-medium text-gemini-dark">体验包</p><p class="text-[11px] text-gemini-dark/40">10 次匹配分析</p></div>
+                                <span class="text-[11px] text-gemini-dark/40">敬请期待</span>
+                            </div>
+                            <div class="flex items-center justify-between px-4 py-3 rounded-xl border border-gemini-purple/20 bg-gradient-to-r from-gemini-purple/10 to-gemini-pink/10">
+                                <div><p class="text-sm font-medium text-gemini-dark">标准包</p><p class="text-[11px] text-gemini-dark/40">50 次匹配分析</p></div>
+                                <span class="text-[11px] text-gemini-purple">敬请期待</span>
+                            </div>
+                        </div>
+                        <button id="oc-share-claim" class="w-full mb-4 px-4 py-3 rounded-xl border border-emerald-400/30 bg-emerald-50 text-emerald-700 text-sm font-semibold hover:bg-emerald-100 smooth-curve active:scale-[0.99] flex items-center justify-center gap-1.5">分享给微信好友，再领 1 次</button>
+                        <p class="text-[11px] font-medium text-gemini-dark/60 mb-2">输入邀请码免费体验</p>
+                        <div class="flex gap-2">
+                            <input id="oc-invite-input" type="text" placeholder="邀请码" class="flex-1 px-4 py-2.5 rounded-xl border border-gemini-dark/10 bg-gemini-lavender/20 text-sm outline-none focus:border-gemini-purple/50 smooth-curve" />
+                            <button id="oc-invite-submit" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-gemini-purple to-gemini-pink text-white text-sm font-semibold shadow-sm hover:opacity-90 smooth-curve active:scale-95">兑换</button>
+                        </div>
+                    </div>
+                `;
+                document.body.appendChild(wrap);
+                wrap.querySelector('#oc-upgrade-close').addEventListener('click', closeUpgradeModal);
+                wrap.addEventListener('click', (e) => { if (e.target === wrap) closeUpgradeModal(); });
+                const submit = wrap.querySelector('#oc-invite-submit');
+                submit.addEventListener('click', () => redeemInvite(wrap.querySelector('#oc-invite-input').value, submit));
+                wrap.querySelector('#oc-invite-input').addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') redeemInvite(wrap.querySelector('#oc-invite-input').value, submit);
+                });
+                const shareBtn = wrap.querySelector('#oc-share-claim');
+                shareBtn.addEventListener('click', () => claimShareReward(shareBtn));
+            }
+            wrap.classList.remove('hidden');
         }
 
         let pendingDeleteAtomId = null;
@@ -3007,6 +3437,13 @@
 
         // 匹配分析 - 新流程：一次性匹配
         elements.btnMatch.addEventListener('click', async () => {
+            // 未登录拦截：必须先登录才能使用匹配功能
+            if (!getToken()) {
+                showJobMessage('请先登录后再开始分析', 'error');
+                openAuthModal('login');
+                return;
+            }
+
             // 新流程：检查是否有简历文件和 JD 文本
             if (!state.resumeFile && !state.useFixedResume && !state.resumeData) {
                 showJobMessage('请先上传简历文件', 'error');
@@ -3036,6 +3473,7 @@
                 loadingStatus.textContent = '分析中...';
                 loadingStatus.classList.remove('is-done');
             }
+            startLoadingTimer(25);
 
             try {
                 const formData = new FormData();
@@ -3068,10 +3506,25 @@
 
                 const response = await fetch(`${API_URL}/api/v1/match/from-upload/stream`, {
                     method: 'POST',
+                    headers: authHeaders(),
                     body: formData
                 });
 
                 if (!response.ok) {
+                    if (response.status === 401) {
+                        setToken(null);
+                        state.currentUser = null;
+                        renderAuthState();
+                        openAuthModal('login');
+                        throw new Error('登录已失效，请重新登录');
+                    }
+                    if (response.status === 402) {
+                        const errData = await response.json().catch(() => ({}));
+                        const detail = errData.detail || '免费次数已用完';
+                        showJobMessage(detail, 'error');
+                        openUpgradeModal();
+                        throw new Error(detail);
+                    }
                     throw new Error(`HTTP ${response.status}: ${response.statusText}`);
                 }
 
@@ -3101,6 +3554,11 @@
                     for (const evt of parsed.events) {
                         if (evt.event === 'connected') {
                         } else if (evt.event === 'progress') {
+                        } else if (evt.event === 'quota') {
+                            if (state.currentUser && evt.data && typeof evt.data.remaining_quota !== 'undefined') {
+                                state.currentUser.remaining_quota = evt.data.remaining_quota;
+                                renderAuthState();
+                            }
                         } else if (evt.event === 'thinking') {
                             if (loadingStatus) {
                                 loadingStatus.textContent = '分析中...';
@@ -3164,6 +3622,7 @@
 
             } catch (err) {
                 console.error('匹配分析失败:', err);
+                stopLoadingAnimation();
                 if (loadingStatus) {
                     loadingStatus.textContent = err.message || '匹配分析失败，请重试';
                 }
@@ -3417,7 +3876,7 @@
             const scoreTextClass = (score >= 85) ? 'text-emerald-600' : (score >= 70) ? 'text-blue-600' : (score >= 55) ? 'text-amber-600' : 'text-red-600';
 
             const overviewMarkup = `
-                <div class="jd-review-shell result-card result-panel" data-result-card data-result-title="评分总览">
+                <div class="jd-review-shell result-card result-panel" data-result-card data-result-title="评分总览" style="border-left:4px solid #b5a9a0;">
                     <div class="flex items-center gap-5">
                         <div class="relative flex items-center justify-center flex-shrink-0" style="width:84px;height:84px;">
                             <div style="width:84px;height:84px;border-radius:50%;background:conic-gradient(${scoreRing} ${score * 3.6}deg, rgba(226,232,240,0.7) 0deg);display:flex;align-items:center;justify-content:center;">
@@ -3430,12 +3889,10 @@
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 mb-1.5">
                                 <span class="jd-review-pill ${score >= 70 ? 'matched' : score >= 55 ? 'partial' : 'missing'}" style="font-size:11px;">${levelText}</span>
-                                ${shouldInterview ? '<span class="jd-review-pill matched" style="font-size:11px;">建议进面</span>' : '<span class="jd-review-pill partial" style="font-size:11px;">建议先优化</span>'}
                             </div>
                             ${verdict ? `<p class="text-[13px] leading-relaxed font-semibold text-gemini-dark/85">${verdict}</p>` : ''}
                         </div>
                     </div>
-                    ${recommendation ? `<div class="mt-3 pt-3 border-t border-gemini-dark/[0.06] text-[12px] leading-relaxed text-gemini-dark/65"><span class="font-bold text-gemini-dark/80">招聘官建议：</span>${recommendation}</div>` : ''}
                     <div class="jd-review-counts mt-3">
                         <span class="jd-review-pill matched">已匹配 ${matchedCount}</span>
                         <span class="jd-review-pill partial">证据不足 ${partialCount}</span>
@@ -3488,7 +3945,7 @@
                     `;
                 };
                 return `
-                    <div class="jd-review-shell result-card result-panel" data-result-card data-result-title="评分依据">
+                    <div class="jd-review-shell result-card result-panel" data-result-card data-result-title="评分依据" style="border-left:4px solid #9d96ab;">
                         <div class="jd-review-header">
                             <div>
                                 <h4 class="jd-review-title">评分依据 · 结构化筛选模型</h4>
@@ -3514,11 +3971,8 @@
             const dimensionsMarkup = dimensions.length ? `
                 <div class="jd-review-shell result-card result-panel" data-result-card data-result-title="五维评分" style="border-left:4px solid #8fa3ad;">
                     <div class="jd-review-header">
-                        <h4 class="jd-review-title">五维评分 · 本地算法测算</h4>
+                        <h4 class="jd-review-title">五维评分</h4>
                     </div>
-                    <p class="text-[11px] leading-relaxed text-gemini-dark/55 mb-3">
-                        由本地算法基于 JD 逐条要求按维度聚合得出，不依赖模型自评分，<span class="font-semibold text-gemini-dark/75">同一简历可稳定复算</span>。
-                    </p>
                     <div class="space-y-2.5">
                         ${dimensions.map(d => {
                             const sc = Math.max(0, Math.min(100, Number(d.score) || 0));
@@ -3629,8 +4083,12 @@
                     ${matchedLines.length ? `
                         <div class="jd-review-section">
                             <div class="jd-review-section-title">已匹配</div>
-                            <div class="jd-match-chip-grid">
-                                ${matchedLines.map(item => `<span class="jd-match-chip">${compactMatchedLabel(item.text)}</span>`).join('')}
+                            <div class="jd-review-list">
+                                ${matchedLines.map(item => `
+                                    <div class="jd-line-item matched" style="padding-left:16px;">
+                                        <div class="jd-line-text" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(item.text || '')}">${escapeHtml(item.text || '')}</div>
+                                    </div>
+                                `).join('')}
                             </div>
                         </div>
                     ` : ''}
@@ -3685,9 +4143,24 @@
             return '不建议直投';
         }
 
-        function stopLoadingAnimation() {
-            return;
+        let loadingTimerId = null;
+        function startLoadingTimer(estimateSeconds = 25) {
+            const timerEl = document.getElementById('loading-timer');
+            if (!timerEl) return;
+            const start = Date.now();
+            const render = () => {
+                const used = Math.floor((Date.now() - start) / 1000);
+                if (used <= estimateSeconds) {
+                    timerEl.textContent = `预计用时约 ${estimateSeconds}s · 已用 ${used}s`;
+                } else {
+                    timerEl.textContent = `比预计稍久，正在收尾 · 已用 ${used}s`;
+                }
+            };
+            render();
+            if (loadingTimerId) clearInterval(loadingTimerId);
+            loadingTimerId = setInterval(render, 1000);
         }
+
 
         function parseSSEBlocks(buffer) {
             const blocks = buffer.split('\n\n');
@@ -4039,7 +4512,7 @@
             setResumeEditState('waiting', `
                 <div class="resume-lab-empty">
                     <div class="w-8 h-8 border-3 border-gemini-purple/20 border-t-gemini-purple rounded-full animate-spin"></div>
-                    <p class="text-[12px] text-gemini-dark/60">正在根据当前简历、JD 和匹配结果生成定制简历...</p>
+                    <p class="text-[12px] text-gemini-dark/60">正在根据当前简历、JD、经历原子库和匹配结果生成定制简历...</p>
                 </div>
             `);
 
@@ -4581,45 +5054,76 @@
                     }
 
                     elements.atomsList.innerHTML = atoms.map(atom => {
-                        const typeLabels = { work: '工作', project: '项目', education: '教育', award: '获奖', skills: '技能' };
+                        const typeLabels = { work: '工作', intern: '实习', project: '项目', campus: '校园', award: '获奖', interest: '用户视角', education: '教育', skills: '技能' };
                         const typeLabel = typeLabels[atom.type] || atom.type;
-                        const typeColors = { work: 'bg-blue-100 text-blue-700', project: 'bg-purple-100 text-purple-700', education: 'bg-green-100 text-green-700', award: 'bg-yellow-100 text-yellow-700', skills: 'bg-pink-100 text-pink-700' };
+                        const typeColors = { work: 'bg-blue-100 text-blue-700', intern: 'bg-sky-100 text-sky-700', project: 'bg-purple-100 text-purple-700', campus: 'bg-orange-100 text-orange-700', award: 'bg-yellow-100 text-yellow-700', interest: 'bg-rose-100 text-rose-700', education: 'bg-green-100 text-green-700', skills: 'bg-pink-100 text-pink-700' };
                         const typeColor = typeColors[atom.type] || 'bg-gray-100 text-gray-700';
                         const title = atom.title || '未命名经历';
-                        const description = atom.description || '暂无描述';
+                        const meta = atom.meta || {};
+                        const fact = meta.fact || {};
+                        const highlight = meta.highlight || '';
+                        const description = (meta.base_description || atom.description || '暂无描述');
+                        const variants = Array.isArray(meta.variants) ? meta.variants : [];
                         const skills = Array.isArray(atom.skills)
                             ? atom.skills.filter(Boolean)
                             : typeof atom.skills === 'string'
                                 ? atom.skills.split(',').map(item => item.trim()).filter(Boolean)
                                 : [];
 
+                        // 事实层（锁定）小标签
+                        const factChips = [
+                            fact.company || atom.company,
+                            fact.role,
+                            fact.duration
+                        ].filter(Boolean);
+
+                        const latestVariant = variants[0];
+
+                        // 标题按类型组织：经历类用「公司/组织 + 岗位」，教育用「学校 + 学历」，兴趣用标题本身
+                        const isExperience = ['work', 'intern', 'project', 'campus', 'award'].includes(atom.type);
+                        const isInterest = atom.type === 'interest';
+                        let displayTitle;
+                        if (atom.type === 'education') {
+                            displayTitle = [fact.company || atom.company, title].filter(Boolean).join(' ');
+                        } else if (isInterest) {
+                            displayTitle = title;
+                        } else {
+                            displayTitle = [fact.company || atom.company, fact.role].filter(Boolean).join(' ');
+                        }
+                        displayTitle = displayTitle || title || '未命名经历';
+                        // 经历类走 STAR 改写；兴趣类走「目标用户契合论证」；教育/技能纯事实不提供
+                        const canRewrite = isExperience || isInterest;
+                        const rewriteBtnText = isInterest ? '论证我是目标用户' : '针对当前 JD 改写表达';
+
                         return `
                             <article class="atom-entry atom-entry-${atom.type} group">
-                                <div class="atom-visual" aria-hidden="true">
-                                    <div class="atom-core"></div>
-                                    <div class="atom-orbit atom-orbit-a">
-                                        <span class="atom-electron"></span>
-                                    </div>
-                                    <div class="atom-orbit atom-orbit-b">
-                                        <span class="atom-electron"></span>
-                                    </div>
-                                    <div class="atom-orbit atom-orbit-c">
-                                        <span class="atom-electron"></span>
-                                    </div>
-                                </div>
                                 <div class="atom-entry-shell">
-                                    <div class="flex-1">
+                                    <div class="flex-1 min-w-0">
                                         <div class="flex items-center gap-2 mb-1.5 flex-wrap">
                                             <span class="atom-type-pill ${typeColor}">${typeLabel}</span>
-                                            <span class="atom-title">${title}</span>
+                                            <span class="atom-title">${escapeHtml(displayTitle)}</span>
                                         </div>
-                                        ${atom.company ? `<p class="atom-company">${atom.company}</p>` : ''}
-                                        <p class="atom-description">${description}</p>
+                                        ${highlight ? `<p class="atom-highlight">✦ ${escapeHtml(highlight)}</p>` : ''}
+                                        <p class="atom-description">${escapeHtml(description)}</p>
                                         ${skills.length > 0 ? `
                                             <div class="atom-skills">
-                                                ${skills.slice(0, 4).map(s => `<span class="atom-skill-chip">${s}</span>`).join('')}
+                                                ${skills.slice(0, 6).map(s => `<span class="atom-skill-chip">${escapeHtml(s)}</span>`).join('')}
                                             </div>
                                         ` : ''}
+                                        ${latestVariant && Array.isArray(latestVariant.bullets) && latestVariant.bullets.length ? `
+                                            <div class="atom-variant">
+                                                <div class="atom-variant-head">
+                                                    <span class="atom-variant-tag">JD 改写版</span>
+                                                    ${latestVariant.emphasis ? `<span class="atom-variant-emphasis">强调：${escapeHtml(latestVariant.emphasis)}</span>` : ''}
+                                                </div>
+                                                <ul class="atom-variant-list">
+                                                    ${latestVariant.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('')}
+                                                </ul>
+                                            </div>
+                                        ` : ''}
+                                        <div class="atom-actions">
+                                            ${canRewrite ? `<button class="atom-rewrite-btn" data-id="${atom.id}">${rewriteBtnText}</button>` : ''}
+                                        </div>
                                     </div>
                                     <button class="delete-atom atom-delete-btn" data-id="${atom.id}">
                                         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
@@ -4632,6 +5136,10 @@
                     // 添加删除事件
                     document.querySelectorAll('.delete-atom').forEach(btn => {
                         btn.addEventListener('click', () => deleteAtom(btn.dataset.id));
+                    });
+                    // 针对当前 JD 改写表达层
+                    document.querySelectorAll('.atom-rewrite-btn').forEach(btn => {
+                        btn.addEventListener('click', () => rewriteAtomForJd(btn.dataset.id, btn));
                     });
                     renderWorkspaceAtomsSidebar();
                 })
@@ -4734,6 +5242,50 @@
             .catch(err => {
                 console.error(err);
                 showJobMessage('删除失败，请稍后重试', 'error');
+            });
+        }
+
+        // 针对当前 JD 改写经历原子的表达层
+        function rewriteAtomForJd(atomId, btn) {
+            const jdText = elements.jdInput ? elements.jdInput.value.trim() : '';
+            if (!jdText) {
+                showJobMessage('请先在「匹配工作台」填写目标 JD，再改写经历表达', 'error');
+                switchTab('workspace');
+                return;
+            }
+
+            const originalText = btn ? btn.textContent : '';
+            if (btn) {
+                btn.disabled = true;
+                btn.textContent = '正在针对 JD 改写...';
+            }
+
+            fetch(`${API_URL}/api/v1/atoms/${atomId}/rewrite`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ jd_text: jdText })
+            })
+            .then(res => res.json().then(data => ({ ok: res.ok, data })))
+            .then(({ ok, data }) => {
+                if (!ok) throw new Error(data.detail || '改写失败');
+                // 兴趣类原子若与岗位不契合，后端返回 skipped + 提示文案
+                if (data.data && data.data.skipped) {
+                    playSound(330, 0.1, 0.04, 'info');
+                    showJobMessage(data.message || '此岗位与该兴趣无明显契合，无需突出', 'info');
+                    if (btn) { btn.disabled = false; btn.textContent = originalText; }
+                    return;
+                }
+                playSound(523, 0.15, 0.1, 'success');
+                showJobMessage(data.message || '已生成针对当前 JD 的表达版本', 'success');
+                loadAtoms();
+            })
+            .catch(err => {
+                console.error(err);
+                showJobMessage(err.message || '改写失败，请稍后重试', 'error');
+                if (btn) {
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
             });
         }
 
@@ -4938,117 +5490,97 @@
             const profileSummary = resume.profile_summary || '';
             const skillsLine = resume.skills_line || [];
             const orderingStrategy = resume.ordering_strategy || [];
+            // 抬头优先用定制结果返回的 basic_info（来自当前简历），兜底用已解析简历
+            const basic = (resume.basic_info) || (state.resumeData && state.resumeData.basic_info) || {};
+            const candidateName = basic.name || (state.resumeData && state.resumeData.basic_info && state.resumeData.basic_info.name) || '我的简历';
+            const contactParts = [basic.phone, basic.email, basic.location].filter(Boolean);
 
             setResumeEditState('content', `
                 <div class="text-left space-y-4">
                     <div class="flex items-center justify-between">
-                        <h3 class="text-sm font-bold text-gemini-dark">✨ 定制简历草稿</h3>
+                        <h3 class="text-sm font-bold text-gemini-dark">✨ 定制简历（改写后）</h3>
                         <div class="flex items-center gap-2">
                             <button id="btn-export-resume-pdf" class="text-[10px] font-bold text-white bg-gemini-dark hover:bg-gemini-dark/85 px-2.5 py-1.5 rounded-lg smooth-curve snd-hover snd-click">导出 PDF</button>
-                            <button id="back-to-match" class="text-[10px] text-gemini-dark/50 hover:text-gemini-dark">返回待生成状态</button>
+                            <button id="back-to-match" class="text-[10px] text-gemini-dark/50 hover:text-gemini-dark">返回</button>
                         </div>
                     </div>
 
-                    <div class="resume-draft-sheet space-y-4">
-                        <div>
-                            <div class="resume-draft-kicker">Customized Resume</div>
-                            <h4 class="text-[15px] font-semibold text-gemini-dark mt-2">${resume.headline || '面向目标岗位的定制简历草稿'}</h4>
-                            <p class="text-[11px] text-gemini-dark/62 leading-7 mt-2">${resume.summary || '已结合当前简历、JD 和匹配结果生成一版更贴近目标岗位的展示草稿。'}</p>
+                    <!-- 真实简历文档：所见即所得，直接对应导出 PDF -->
+                    <div class="resume-paper">
+                        <div class="resume-paper-head">
+                            <h1 class="resume-paper-name">${escapeHtml(candidateName)}</h1>
+                            ${contactParts.length ? `<div class="resume-paper-contact">${contactParts.map(escapeHtml).join('　|　')}</div>` : ''}
+                            ${resume.headline ? `<div class="resume-paper-headline">${escapeHtml(resume.headline)}</div>` : ''}
                         </div>
 
                         ${profileSummary ? `
-                            <div class="resume-draft-section">
-                                <div class="resume-draft-section-title">建议个人简介</div>
-                                <div class="resume-draft-section-copy">${profileSummary}</div>
-                            </div>
+                            <section class="resume-paper-section">
+                                <h2 class="resume-paper-h2">个人简介</h2>
+                                <p class="resume-paper-summary">${escapeHtml(profileSummary)}</p>
+                            </section>
                         ` : ''}
 
                         ${skillsLine.length ? `
-                            <div class="resume-draft-section">
-                                <div class="resume-draft-section-title">建议技能行</div>
-                                <div class="mt-3 flex flex-wrap gap-1.5">
-                                    ${skillsLine.map(skill => `<span class="resume-skill-chip">${skill}</span>`).join('')}
+                            <section class="resume-paper-section">
+                                <h2 class="resume-paper-h2">核心技能</h2>
+                                <div class="resume-paper-skills">
+                                    ${skillsLine.map(skill => `<span class="resume-paper-skill">${escapeHtml(skill)}</span>`).join('')}
                                 </div>
-                            </div>
+                            </section>
                         ` : ''}
 
                         ${blocks.length ? `
-                            <div class="resume-draft-section">
-                                <div class="resume-draft-section-title">建议经历排布</div>
-                                <div class="space-y-3 mt-3">
-                                    ${blocks.map((block, index) => `
-                                        <div class="rounded-2xl border border-slate-200/80 bg-white/80 px-4 py-3">
-                                            <div class="flex items-start justify-between gap-3">
-                                                <div>
-                                                    <div class="text-[10px] font-semibold text-gemini-dark/38 tracking-[0.12em] uppercase">Experience ${index + 1}</div>
-                                                    <h4 class="text-xs font-bold text-gemini-dark mt-1">${block.title || '核心经历'}</h4>
-                                                    <p class="text-[10px] text-gemini-dark/46 mt-1">${block.company || ''} ${block.type ? `· ${block.type}` : ''}</p>
-                                                </div>
+                            <section class="resume-paper-section">
+                                <h2 class="resume-paper-h2">项目 / 实习经历</h2>
+                                <div class="space-y-3 mt-2">
+                                    ${blocks.map(block => `
+                                        <div class="resume-paper-exp">
+                                            <div class="resume-paper-exp-head">
+                                                <span class="resume-paper-exp-title">${escapeHtml(block.title || '核心经历')}</span>
+                                                ${[block.company, block.type === 'work' ? '工作' : block.type === 'project' ? '项目' : ''].filter(Boolean).length ? `<span class="resume-paper-exp-meta">${[escapeHtml(block.company || ''), block.type === 'work' ? '工作' : block.type === 'project' ? '项目' : ''].filter(Boolean).join(' · ')}</span>` : ''}
                                             </div>
-                                            ${block.reasons?.length ? `
-                                                <div class="mt-3 flex flex-wrap gap-1.5">
-                                                    ${block.reasons.map(reason => `<span class="px-2 py-1 bg-gemini-lavender/70 text-gemini-dark/76 rounded-lg text-[10px]">${reason}</span>`).join('')}
-                                                </div>
-                                            ` : ''}
-                                            ${block.bullets?.length ? `
-                                                <div class="mt-3 space-y-1.5">
-                                                    ${block.bullets.map(bullet => `<p class="text-[11px] text-gemini-dark/72 leading-relaxed">• ${bullet}</p>`).join('')}
-                                                </div>
+                                            ${(block.bullets || []).length ? `
+                                                <ul class="resume-paper-bullets">
+                                                    ${block.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('')}
+                                                </ul>
                                             ` : ''}
                                         </div>
                                     `).join('')}
                                 </div>
-                            </div>
-                        ` : ''}
-
-                        ${orderingStrategy.length ? `
-                            <div class="resume-draft-section">
-                                <div class="resume-draft-section-title">排序策略</div>
-                                <div class="space-y-2 mt-3">
-                                    ${orderingStrategy.map(item => `<p class="text-[11px] text-gemini-dark/72 leading-relaxed">• ${item}</p>`).join('')}
-                                </div>
-                            </div>
+                            </section>
                         ` : ''}
                     </div>
 
-                    ${summaryBullets.length ? `
-                        <div class="p-4 bg-white/80 rounded-2xl">
-                            <h4 class="text-xs font-bold text-gemini-dark mb-3">🧭 定制策略</h4>
-                            <div class="space-y-2">
-                                ${summaryBullets.map(item => `<p class="text-[11px] text-gemini-dark/72 leading-relaxed">• ${item}</p>`).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-
-                    ${matched.length || missing.length ? `
-                        <div class="p-4 bg-white/80 rounded-2xl">
-                            <h4 class="text-xs font-bold text-gemini-dark mb-3">🎯 JD 对齐情况</h4>
-                            ${matched.length ? `
-                                <div class="mb-3">
-                                    <div class="text-[10px] font-semibold text-green-700 mb-2">已覆盖要求</div>
-                                    <div class="flex flex-wrap gap-1.5">
-                                        ${matched.map(item => `<span class="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-[10px]">${item}</span>`).join('')}
+                    ${(matched.length || missing.length || notes.length) ? `
+                        <details class="resume-aux">
+                            <summary class="resume-aux-summary">定制说明（JD 对齐 / 提醒）</summary>
+                            <div class="resume-aux-body space-y-3">
+                                ${matched.length ? `
+                                    <div>
+                                        <div class="text-[10px] font-semibold text-green-700 mb-1.5">已覆盖 JD 要求</div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                            ${matched.map(item => `<span class="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-[10px]">${escapeHtml(item)}</span>`).join('')}
+                                        </div>
                                     </div>
-                                </div>
-                            ` : ''}
-                            ${missing.length ? `
-                                <div>
-                                    <div class="text-[10px] font-semibold text-rose-700 mb-2">仍需补位</div>
-                                    <div class="flex flex-wrap gap-1.5">
-                                        ${missing.map(item => `<span class="px-2 py-1 bg-rose-100 text-rose-700 rounded-lg text-[10px]">${item}</span>`).join('')}
+                                ` : ''}
+                                ${missing.length ? `
+                                    <div>
+                                        <div class="text-[10px] font-semibold text-rose-700 mb-1.5">仍需补位（不建议硬写）</div>
+                                        <div class="flex flex-wrap gap-1.5">
+                                            ${missing.map(item => `<span class="px-2 py-1 bg-rose-100 text-rose-700 rounded-lg text-[10px]">${escapeHtml(item)}</span>`).join('')}
+                                        </div>
                                     </div>
-                                </div>
-                            ` : ''}
-                        </div>
-                    ` : ''}
-
-                    ${notes.length ? `
-                        <div class="p-4 bg-amber-50 rounded-2xl">
-                            <h4 class="text-xs font-bold text-amber-900 mb-2">💡 优化提醒</h4>
-                            <div class="space-y-1">
-                                ${notes.map(note => `<p class="text-[10px] text-amber-800 leading-relaxed">${note}</p>`).join('')}
+                                ` : ''}
+                                ${notes.length ? `
+                                    <div>
+                                        <div class="text-[10px] font-semibold text-amber-800 mb-1.5">提醒</div>
+                                        <div class="space-y-1">
+                                            ${notes.map(note => `<p class="text-[10px] text-amber-800 leading-relaxed">• ${escapeHtml(note)}</p>`).join('')}
+                                        </div>
+                                    </div>
+                                ` : ''}
                             </div>
-                        </div>
+                        </details>
                     ` : ''}
                 </div>
             `);
@@ -5120,7 +5652,7 @@
                 </body></html>
             `;
 
-            const printWindow = window.open('', '_blank', 'noopener,noopener,width=900,height=1200');
+            const printWindow = window.open('', '_blank', 'width=900,height=1200');
             if (printWindow) {
                 printWindow.document.open();
                 printWindow.document.write(html);
@@ -5158,6 +5690,10 @@
 
         // 停止加载动画
         function stopLoadingAnimation() {
+            if (loadingTimerId) {
+                clearInterval(loadingTimerId);
+                loadingTimerId = null;
+            }
             elements.resultLoading.classList.add('hidden');
             elements.resultContent.classList.remove('hidden');
             elements.resultWaiting.classList.add('hidden');
@@ -5374,6 +5910,9 @@
         if (campusBtn) {
             campusBtn.addEventListener('click', fetchCampusScore);
         }
+
+        // 启动时恢复登录态 + 渲染账号区
+        restoreSession();
     });
     </script>
 </body>

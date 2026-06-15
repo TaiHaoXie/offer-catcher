@@ -241,7 +241,11 @@ class OneShotMatchEngine:
         return "D级"
 
     def _sharpen_verdict(self, verdict: str, score: int, gaps: List[Any], knockout_blocked: bool = False) -> str:
-        """把一句话判断收得更像自然的招聘官评语"""
+        """把一句话判断收得更像自然的招聘官评语。
+
+        优先信任 LLM 生成的、结合具体简历的 verdict；仅在它缺失或过短时才用模板兜底，
+        避免把“具体简历具体分析”的结论替换成任何岗位都能套用的空话。
+        """
         text = str(verdict or "").strip()
 
         # 硬门槛受限（如专业不对口/学历不够）优先：明确告诉用户"不是简历不行，是岗位卡硬门槛"，
@@ -249,10 +253,11 @@ class OneShotMatchEngine:
         if knockout_blocked and score < 70:
             return "简历本身有亮点，分数偏低主要是这个岗位卡了硬门槛（专业/学历/必备技能不完全匹配）；这份经历投到更对口的方向会更有竞争力。"
 
-        lowered = text.replace("，", "").replace("。", "")
-        if any(marker in lowered for marker in ["面试中大概率会被追问", "不足以支撑高分", "呈现得不够直接", "不够完整"]):
+        # LLM verdict 已经足够具体（有实质内容、长度够）就直接用，不再套模板。
+        if len(text) >= 12:
             return text
 
+        # 以下仅作兜底：LLM verdict 缺失或过短时使用。
         gap_text = " ".join(
             str((item.get("gap") or item.get("title") or "")) if isinstance(item, dict) else str(item)
             for item in (gaps or [])
@@ -1680,7 +1685,7 @@ JSON Schema:
     "match_score": 0,
     "match_level": "A级|B级|C级|D级",
     "hiring_recommendation": "一句话建议，说明是否值得推进，口吻像大厂招聘官",
-    "one_sentence_verdict": "一句话定调，像大厂招聘官在看完简历后的第一反应，要求锋利、专业、像箴言"
+    "one_sentence_verdict": "一句话定调，像大厂招聘官在看完简历后的第一反应，要求锋利、专业、像箴言；必须结合这份简历的具体事实——点名候选人最相关的经历/项目/技能或最致命的缺口，禁止写任何岗位都能套用的空话"
   }},
   "jd_interpretation": {{
     "role_title": "岗位名称的人话理解",
@@ -1815,7 +1820,7 @@ JSON Schema:
 - 解释要像一个懂业务的一线面试官在说人话：专业，但别装腔作势；允许直白，禁止继续堆黑话。
 - recommendation.reason 要和分数逻辑一致，不能自相矛盾。
 - 如果简历证据不足，就写 insufficient_evidence，不要瞎编。
-- one_sentence_verdict 不要温吞。要像招聘官的第一判断，专业、锋利、克制、像真实面评里的第一句结论。
+- one_sentence_verdict 不要温吞。要像招聘官的第一判断，专业、锋利、克制、像真实面评里的第一句结论。必须具体简历具体分析：点名这份简历里最相关的经历/项目/技能，或最致命的缺口，不能写成换个候选人也成立的通用评价。
 - hiring_recommendation 要兼顾判断与帮助：既告诉用户值不值得投，也要指出优先补哪一刀最有效。
 - why_it_blocks 要像招聘官解释“为什么会卡简历”那样写，优先使用“初筛阶段不容易判断 / 不足以支撑高分 / 面试中大概率会被追问 / 关键价值没有被清楚呈现 / 还不足以让人放心推进”这类真实表达，不要写成学术说明。
 - emergency_fix 要优先给 7 天内能完成的补表达/补证据动作。

@@ -309,7 +309,7 @@ RECRUITER_STYLE_MATCH_USER_PROMPT = """
     "match_score": 0,
     "match_level": "A/B/C/D",
     "hiring_recommendation": "强烈建议推进/可以进入初筛/可作为备选/暂不建议推进",
-    "one_sentence_verdict": "一句话总结是否匹配以及核心原因"
+    "one_sentence_verdict": "一句话总结匹配结论，必须结合这份简历的具体事实（点名候选人最相关的经历/项目/技能或最致命的缺口），不要套用任何岗位都能用的空话"
   }},
   "jd_interpretation": {{
     "role_title": "岗位名称的人话理解",

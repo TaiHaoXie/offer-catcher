@@ -36,6 +36,8 @@ prepare_backend_env() {
         pip install -r requirements.txt
     else
         source venv/bin/activate
+        # 复用已有 venv 时也同步一次依赖，确保新增依赖（如鉴权所需 PyJWT/passlib）已安装
+        pip install -r requirements.txt > /dev/null 2>&1 || true
     fi
 
     # 准备 .env（缺失则由 .env.example 派生）

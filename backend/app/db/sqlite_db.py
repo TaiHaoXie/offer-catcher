@@ -108,11 +108,72 @@ class SQLiteDatabase:
             )
         """)
 
+        # 用户表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                email TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                remaining_quota INTEGER NOT NULL DEFAULT 0,
+                seen_onboarding INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 邀请码表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS invite_codes (
+                code TEXT PRIMARY KEY,
+                max_uses INTEGER NOT NULL DEFAULT 1,
+                used_count INTEGER NOT NULL DEFAULT 0,
+                grant_count INTEGER NOT NULL DEFAULT 1,
+                active INTEGER NOT NULL DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 邀请码兑换记录表
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS invite_redemptions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                code TEXT NOT NULL,
+                redeemed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, code)
+            )
+        """)
+
         # 创建索引提升查询性能
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_matches_resume ON matches(resume_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_matches_job ON matches(job_id)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_matches_created ON matches(created_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_atoms_type ON atoms(atom_type)")
+
+        # 迁移：为 atoms 增加 meta 列，承载事实层/表达层与 JD 改写版本
+        atom_cols = [row[1] for row in cursor.execute("PRAGMA table_info(atoms)").fetchall()]
+        if "meta" not in atom_cols:
+            cursor.execute("ALTER TABLE atoms ADD COLUMN meta TEXT")
+
+        # 迁移：手机号登录改造。
+        # - email 列复用为登录身份（存手机号），password_hash 不再使用（手机号+验证码登录）。
+        # - 新增 is_unlimited：站长本人手机号设为无限次。
+        user_cols = [row[1] for row in cursor.execute("PRAGMA table_info(users)").fetchall()]
+        if "is_unlimited" not in user_cols:
+            cursor.execute("ALTER TABLE users ADD COLUMN is_unlimited INTEGER NOT NULL DEFAULT 0")
+
+        # seed 演示邀请码（重复启动不会报错）
+        cursor.execute(
+            """INSERT OR IGNORE INTO invite_codes (code, max_uses, used_count, grant_count, active)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("OFFER2026", 100, 0, 1, 1)
+        )
+        # seed 通用验证码 WASD：任何人凭它登录可使用一次完整流程（max_uses 给足，按人次发放）
+        cursor.execute(
+            """INSERT OR IGNORE INTO invite_codes (code, max_uses, used_count, grant_count, active)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("WASD", 1000000, 0, 1, 1)
+        )
 
         conn.commit()
         conn.close()
@@ -256,15 +317,16 @@ class SQLiteDatabase:
         conn = self._get_conn()
         try:
             conn.execute(
-                """INSERT INTO atoms (id, title, atom_type, description, company, skills)
-                   VALUES (?, ?, ?, ?, ?, ?)""",
+                """INSERT INTO atoms (id, title, atom_type, description, company, skills, meta)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     atom_id,
                     atom.get("title", ""),
                     atom.get("type", "work"),
                     atom.get("description", ""),
                     atom.get("company", ""),
-                    json.dumps(atom.get("skills", []), ensure_ascii=False)
+                    json.dumps(atom.get("skills", []), ensure_ascii=False),
+                    json.dumps(atom.get("meta", {}), ensure_ascii=False)
                 )
             )
             conn.commit()
@@ -280,7 +342,7 @@ class SQLiteDatabase:
         conn = self._get_conn()
         try:
             cursor = conn.execute(
-                """SELECT id, title, atom_type, description, company, skills, created_at
+                """SELECT id, title, atom_type, description, company, skills, meta, created_at
                    FROM atoms
                    ORDER BY created_at DESC"""
             )
@@ -292,10 +354,48 @@ class SQLiteDatabase:
                     "description": row["description"],
                     "company": row["company"],
                     "skills": json.loads(row["skills"]) if row["skills"] else [],
+                    "meta": json.loads(row["meta"]) if ("meta" in row.keys() and row["meta"]) else {},
                     "created_at": row["created_at"]
                 }
                 for row in cursor.fetchall()
             ]
+        finally:
+            conn.close()
+
+    def get_atom(self, atom_id: str) -> Optional[Dict[str, Any]]:
+        """获取单个经历原子"""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """SELECT id, title, atom_type, description, company, skills, meta, created_at
+                   FROM atoms WHERE id = ?""",
+                (atom_id,)
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "title": row["title"],
+                "type": row["atom_type"],
+                "description": row["description"],
+                "company": row["company"],
+                "skills": json.loads(row["skills"]) if row["skills"] else [],
+                "meta": json.loads(row["meta"]) if ("meta" in row.keys() and row["meta"]) else {},
+                "created_at": row["created_at"]
+            }
+        finally:
+            conn.close()
+
+    def update_atom_meta(self, atom_id: str, meta: Dict[str, Any]) -> bool:
+        """更新经历原子的 meta（表达层版本等）"""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE atoms SET meta = ? WHERE id = ?",
+                (json.dumps(meta, ensure_ascii=False), atom_id)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
         finally:
             conn.close()
 
@@ -309,6 +409,222 @@ class SQLiteDatabase:
             )
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    # ========== 账号体系 ==========
+
+    def get_or_create_user_by_phone(self, phone: str, signup_quota: int, is_unlimited: bool = False) -> Dict[str, Any]:
+        """按手机号获取用户，不存在则创建（手机号+验证码登录）。
+
+        - 已存在：直接返回；若 is_unlimited 需要提升则同步更新。
+        - 不存在：创建并赠送 signup_quota 次（无限用户额度记 0，由 is_unlimited 控制）。
+        手机号复用 email 列作为唯一登录身份；password_hash 写占位值（不再用于校验）。
+        """
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT id, email, remaining_quota, seen_onboarding, is_unlimited, created_at FROM users WHERE email = ?",
+                (phone,)
+            ).fetchone()
+            if row:
+                # 已存在：必要时把站长本人提升为无限
+                if is_unlimited and not row["is_unlimited"]:
+                    conn.execute("UPDATE users SET is_unlimited = 1 WHERE id = ?", (row["id"],))
+                    conn.commit()
+                return {
+                    "id": row["id"],
+                    "phone": row["email"],
+                    "remaining_quota": row["remaining_quota"],
+                    "seen_onboarding": bool(row["seen_onboarding"]),
+                    "is_unlimited": bool(is_unlimited or row["is_unlimited"]),
+                    "created_at": row["created_at"],
+                    "is_new": False,
+                }
+            user_id = str(uuid.uuid4())
+            conn.execute(
+                """INSERT INTO users (id, email, password_hash, remaining_quota, seen_onboarding, is_unlimited)
+                   VALUES (?, ?, ?, ?, 0, ?)""",
+                (user_id, phone, "phone-login", 0 if is_unlimited else signup_quota, 1 if is_unlimited else 0)
+            )
+            conn.commit()
+            return {
+                "id": user_id,
+                "phone": phone,
+                "remaining_quota": 0 if is_unlimited else signup_quota,
+                "seen_onboarding": False,
+                "is_unlimited": is_unlimited,
+                "created_at": None,
+                "is_new": True,
+            }
+        finally:
+            conn.close()
+
+    def create_user(self, email: str, password_hash: str, quota: int) -> Dict[str, Any]:
+        """创建用户，email 冲突抛 ValueError"""
+        user_id = str(uuid.uuid4())
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                """INSERT INTO users (id, email, password_hash, remaining_quota, seen_onboarding)
+                   VALUES (?, ?, ?, ?, 0)""",
+                (user_id, email, password_hash, quota)
+            )
+            conn.commit()
+            return {
+                "id": user_id,
+                "email": email,
+                "remaining_quota": quota,
+                "seen_onboarding": False
+            }
+        except sqlite3.IntegrityError:
+            raise ValueError("该邮箱已注册")
+        finally:
+            conn.close()
+
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """按 email 查询用户（含 password_hash，用于登录校验）"""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """SELECT id, email, password_hash, remaining_quota, seen_onboarding, created_at
+                   FROM users WHERE email = ?""",
+                (email,)
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "email": row["email"],
+                "password_hash": row["password_hash"],
+                "remaining_quota": row["remaining_quota"],
+                "seen_onboarding": bool(row["seen_onboarding"]),
+                "created_at": row["created_at"]
+            }
+        finally:
+            conn.close()
+
+    def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """按 id 查询用户（不含 password_hash，用于对外）"""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """SELECT id, email, remaining_quota, seen_onboarding, is_unlimited, created_at
+                   FROM users WHERE id = ?""",
+                (user_id,)
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "id": row["id"],
+                "email": row["email"],
+                "phone": row["email"],
+                "remaining_quota": row["remaining_quota"],
+                "seen_onboarding": bool(row["seen_onboarding"]),
+                "is_unlimited": bool(row["is_unlimited"]),
+                "created_at": row["created_at"]
+            }
+        finally:
+            conn.close()
+
+    def update_quota(self, user_id: str, delta: int) -> int:
+        """原子更新额度，返回更新后的 remaining_quota"""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE users SET remaining_quota = remaining_quota + ? WHERE id = ?",
+                (delta, user_id)
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT remaining_quota FROM users WHERE id = ?",
+                (user_id,)
+            ).fetchone()
+            return row["remaining_quota"] if row else 0
+        finally:
+            conn.close()
+
+    def consume_quota(self, user_id: str) -> bool:
+        """原子安全扣减 1，成功返回 True（并发下不会扣成负数）"""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE users SET remaining_quota = remaining_quota - 1 WHERE id = ? AND remaining_quota > 0",
+                (user_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def mark_onboarding_done(self, user_id: str) -> bool:
+        """标记已看过引导"""
+        conn = self._get_conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE users SET seen_onboarding = 1 WHERE id = ?",
+                (user_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def get_invite_code(self, code: str) -> Optional[Dict[str, Any]]:
+        """查询邀请码"""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                """SELECT code, max_uses, used_count, grant_count, active
+                   FROM invite_codes WHERE code = ?""",
+                (code,)
+            ).fetchone()
+            if not row:
+                return None
+            return {
+                "code": row["code"],
+                "max_uses": row["max_uses"],
+                "used_count": row["used_count"],
+                "grant_count": row["grant_count"],
+                "active": bool(row["active"])
+            }
+        finally:
+            conn.close()
+
+    def has_redeemed(self, user_id: str, code: str) -> bool:
+        """判断用户是否已兑换过该邀请码"""
+        conn = self._get_conn()
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM invite_redemptions WHERE user_id = ? AND code = ?",
+                (user_id, code)
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+    def record_redemption(self, user_id: str, code: str) -> None:
+        """记录一次兑换"""
+        redemption_id = str(uuid.uuid4())
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO invite_redemptions (id, user_id, code) VALUES (?, ?, ?)",
+                (redemption_id, user_id, code)
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def increment_invite_used(self, code: str) -> None:
+        """邀请码已用次数 +1"""
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "UPDATE invite_codes SET used_count = used_count + 1 WHERE code = ?",
+                (code,)
+            )
+            conn.commit()
         finally:
             conn.close()
 

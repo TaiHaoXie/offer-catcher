@@ -3,6 +3,7 @@ Offer 捕手 - LLM客户端（LiteLLM多模型支持）
 """
 import os
 import json
+import time
 from typing import Dict, List, Optional, Any
 from litellm import completion
 from dotenv import load_dotenv
@@ -67,26 +68,36 @@ class LLMClient:
         response_format: Optional[Dict] = None,
         temperature: float = 0.3
     ) -> str:
-        """调用LLM"""
+        """调用LLM（带 429 退避重试；不回退到未配置 key 的模型）"""
 
         config = self._get_model_config(model)
+        # 仅在目标模型确实配置了 key 时调用，避免回退到占位 key 触发 401
+        if not config.get("api_key") or config["api_key"].startswith("your_"):
+            raise RuntimeError(f"模型 {model or self.default_model} 未配置有效 API Key")
 
-        try:
-            response = completion(
-                model=config["model"],
-                messages=messages,
-                api_base=config["api_base"],
-                api_key=config["api_key"],
-                response_format=response_format,
-                temperature=temperature
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            print(f"LLM调用失败: {e}")
-            # 尝试使用备用模型
-            if model != "doubao":
-                return self.call(messages, model="doubao", response_format=response_format)
-            raise
+        last_error: Optional[Exception] = None
+        for attempt in range(4):
+            try:
+                response = completion(
+                    model=config["model"],
+                    messages=messages,
+                    api_base=config["api_base"],
+                    api_key=config["api_key"],
+                    response_format=response_format,
+                    temperature=temperature
+                )
+                return response.choices[0].message.content
+            except Exception as e:
+                last_error = e
+                msg = str(e)
+                # 429 / 限流 / 过载：指数退避后重试
+                if "429" in msg or "RateLimit" in msg or "overloaded" in msg:
+                    if attempt < 3:
+                        time.sleep(2 * (attempt + 1))
+                        continue
+                print(f"LLM调用失败: {e}")
+                raise
+        raise last_error if last_error else RuntimeError("LLM 调用失败")
 
     def call_json(
         self,

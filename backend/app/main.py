@@ -51,6 +51,10 @@ from app.services.deep_analysis import DeepAnalysisService
 from app.services.atom_generator import AtomGenerator
 # 岗位推荐
 from app.services.job_recommender import get_job_recommender
+# 账号鉴权与用量额度
+from app.services.auth_service import get_auth_service, get_current_user
+from app.services.quota_service import get_quota_service
+from fastapi import Depends
 
 # ========== 日志配置 ==========
 
@@ -190,6 +194,63 @@ async def root():
             "error": str(e)
         }
 
+# ========== 账号鉴权 / 用量额度 / 邀请码接口 ==========
+
+class PhoneLoginRequest(BaseModel):
+    phone: str
+    code: str
+
+
+class RedeemInviteRequest(BaseModel):
+    code: str
+
+
+@app.post("/api/v1/auth/login")
+async def auth_login(req: PhoneLoginRequest):
+    """手机号 + 验证码登录/注册，返回 JWT。
+
+    - 站长本人手机号无限次；其他手机号凭通用验证码可使用一次完整流程。
+    - 首次登录自动创建账号（无需单独注册）。
+    """
+    try:
+        return {"success": True, **get_auth_service().login_with_phone(req.phone, req.code)}
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+
+@app.get("/api/v1/auth/me")
+async def auth_me(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """返回当前登录用户信息（手机号、剩余次数、是否无限、是否看过引导）。"""
+    return {"success": True, "user": current_user}
+
+
+@app.post("/api/v1/auth/onboarding-done")
+async def auth_onboarding_done(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """标记当前用户已完成首次引导。"""
+    get_db().mark_onboarding_done(current_user["id"])
+    return {"success": True}
+
+
+@app.post("/api/v1/invite/redeem")
+async def invite_redeem(req: RedeemInviteRequest, current_user: Dict[str, Any] = Depends(get_current_user)):
+    """兑换邀请码，增加免费体验次数。"""
+    try:
+        result = get_quota_service().redeem_invite(current_user["id"], req.code)
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/v1/share/claim")
+async def share_claim(current_user: Dict[str, Any] = Depends(get_current_user)):
+    """分享给微信好友奖励：每个账号仅可领取一次 +1 次。"""
+    try:
+        result = get_quota_service().claim_share_reward(current_user["id"])
+        return {"success": True, **result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # ========== 简历解析接口 ==========
 
 @app.post("/api/v1/resume/parse")
@@ -229,18 +290,29 @@ async def parse_resume(file: UploadFile = File(...)):
 
         # 根据文件类型选择解析方式
         if filename.lower().endswith('.pdf'):
-            # 使用 Kimi 视觉模型直接分析 PDF
+            # 优先走「文本提取 + LLM」快路径：绝大多数简历是数字版 PDF，可直接取文本，
+            # 比把每页渲染成 2x 图片再喂视觉模型快很多。只有文本为空/疑似乱码（扫描件）
+            # 才回退到 Kimi 视觉模型。
+            text = ""
             try:
-                logger.info("使用 Kimi 视觉模型解析 PDF...")
-                resume_data = await vision_parser.parse_pdf_async(content, filename)
-                logger.info(f"视觉解析成功: {resume_data.get('basic_info', {}).get('name', '未知')}")
-            except Exception as e:
-                logger.warning(f"视觉解析失败，降级到文本解析: {e}")
-                # 降级：提取文本后用 LLM 解析
                 text = pdf_parser.extract_text(content, filename)
-                if not text.strip():
-                    raise ValueError("无法从 PDF 中提取文本内容")
+            except Exception as e:
+                logger.warning(f"PDF 文本提取失败，转视觉解析: {e}")
+
+            if text.strip() and not pdf_parser._looks_garbled(text):
+                logger.info("PDF 文本提取成功，使用 LLM 文本解析（快路径）")
                 resume_data = await llm_parser.parse_async(text)
+            else:
+                # 扫描件 / 取不到文本：用 Kimi 视觉模型兜底
+                try:
+                    logger.info("PDF 无可用文本，使用 Kimi 视觉模型解析...")
+                    resume_data = await vision_parser.parse_pdf_async(content, filename)
+                    logger.info(f"视觉解析成功: {resume_data.get('basic_info', {}).get('name', '未知')}")
+                except Exception as e:
+                    logger.warning(f"视觉解析失败: {e}")
+                    if not text.strip():
+                        raise ValueError("无法从 PDF 中提取文本内容")
+                    resume_data = await llm_parser.parse_async(text)
 
         elif filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
             # 图片文件，使用视觉模型
@@ -565,7 +637,8 @@ async def stream_match_analysis(resume_data: str = Form(...), job_data: str = Fo
 async def stream_match_from_upload(
     resume_file: Optional[UploadFile] = File(None, description="简历文件"),
     jd_text: str = Form(..., description="JD 文本"),
-    use_fixed_resume: bool = Form(False, description="是否使用固定测试简历")
+    use_fixed_resume: bool = Form(False, description="是否使用固定测试简历"),
+    current_user: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     流式一次性匹配分析 - 支持文件上传
@@ -584,6 +657,14 @@ async def stream_match_from_upload(
     - 添加 retry 字段控制重连间隔
     - 正确的响应头配置
     """
+    # ===== 准入：必须已登录且有剩余次数 =====
+    quota_service = get_quota_service()
+    if not quota_service.check_quota(current_user["id"]):
+        raise HTTPException(
+            status_code=402,
+            detail="免费次数已用完，输入邀请码可再体验一次，或前往升级获取更多次数。"
+        )
+
     # ===== 先读取文件（避免在生成器中读取时文件已关闭）=====
     if use_fixed_resume:
         fixed_resume_path = os.path.join(
@@ -641,6 +722,7 @@ async def stream_match_from_upload(
 
             # ===== 阶段3：LLM 流式分析 =====
             event_count = 0
+            got_result = False
 
             logger.info("开始调用 analyze_stream...")
 
@@ -678,6 +760,7 @@ async def stream_match_from_upload(
 
                 elif event_type == "result":
                     # 最终结果
+                    got_result = True
                     yield f"event: result\ndata: {json.dumps(event_data)}\nid: {event_id}\n\n"
 
                 elif event_type == "error":
@@ -689,6 +772,16 @@ async def stream_match_from_upload(
                     yield f"event: done\ndata: {json.dumps(event_data)}\nid: {event_id}\n\n"
 
             # ===== 完成 =====
+            # 分析成功产出结果才扣减额度；扣减后把最新剩余次数推给前端。
+            if got_result:
+                try:
+                    quota_service.consume(current_user["id"])
+                    refreshed = get_db().get_user_by_id(current_user["id"]) or {}
+                    event_id += 1
+                    yield f"event: quota\ndata: {json.dumps({'remaining_quota': refreshed.get('remaining_quota', 0)})}\nid: {event_id}\n\n"
+                except Exception as quota_err:
+                    logger.warning(f"额度扣减失败（不影响结果返回）: {quota_err}")
+
             event_id += 1
             elapsed = time.time() - start_time
             yield f"event: done\ndata: {json.dumps({'message': '分析完成', 'elapsed': f'{elapsed:.1f}秒'})}\nid: {event_id}\n\n"
@@ -1043,6 +1136,7 @@ async def _build_customize_resume_with_ai(
         api_key=api_key,
         api_base=api_base,
         timeout=60,
+        num_retries=3,  # Kimi 过载(429)时自动退避重试，避免直接掉到规则兜底
     )
     content = resp.choices[0].message.content or ""
     stripped = content.strip()
@@ -1422,12 +1516,24 @@ async def create_atom(request: Request):
         if not title:
             raise HTTPException(status_code=400, detail="标题不能为空")
 
+        description = payload.get("description", "")
+        company = payload.get("company", "")
         atom = {
             "title": title,
             "type": payload.get("atom_type") or payload.get("type") or "work",
-            "description": payload.get("description", ""),
-            "company": payload.get("company", ""),
+            "description": description,
+            "company": company,
             "skills": _normalize_skills(payload.get("skills")),
+            "meta": {
+                "fact": {
+                    "company": company,
+                    "role": payload.get("role", "") or title,
+                    "duration": payload.get("duration", ""),
+                },
+                "base_description": description,
+                "highlight": "",
+                "variants": []
+            }
         }
         atom_id = db.save_atom(atom)
         logger.info(f"Atom created: {atom_id}")
@@ -1453,6 +1559,54 @@ async def delete_atom(atom_id: str):
         raise
     except Exception as e:
         logger.error(f"Failed to delete atom: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class RewriteAtomRequest(BaseModel):
+    """针对 JD 改写经历原子表达层"""
+    jd_text: str
+
+
+@app.post("/api/v1/atoms/{atom_id}/rewrite")
+async def rewrite_atom_for_jd(atom_id: str, request: RewriteAtomRequest):
+    """针对目标 JD 重写经历原子的表达层，生成并保存一个改写版本(variant)"""
+    db = get_db()
+    try:
+        if not request.jd_text.strip():
+            raise HTTPException(status_code=400, detail="请提供目标 JD 文本")
+
+        atom = db.get_atom(atom_id)
+        if not atom:
+            raise HTTPException(status_code=404, detail="经历原子不存在")
+
+        # 兴趣类原子：走「目标用户契合论证」；其余经历类：走 STAR 表达改写
+        if atom.get("type") == "interest":
+            variant = atom_generator.argue_user_fit(atom, request.jd_text)
+            if not variant.get("relevant"):
+                # 不契合：不写入版本，直接返回提示，避免教用户硬蹭
+                note = variant.get("note") or "此岗位与该兴趣无明显契合，无需在简历中突出。"
+                return {"success": True, "data": {"variant": variant, "skipped": True}, "message": note}
+            if not variant.get("bullets"):
+                raise HTTPException(status_code=502, detail="AI 论证暂不可用，请稍后重试")
+            msg = "已生成「目标用户契合」论证"
+        else:
+            variant = atom_generator.rewrite_for_jd(atom, request.jd_text)
+            if not variant.get("bullets"):
+                raise HTTPException(status_code=502, detail="AI 改写暂不可用，请稍后重试")
+            msg = "已生成针对该 JD 的改写版本"
+
+        meta = atom.get("meta") or {}
+        variants = meta.get("variants") or []
+        variants.insert(0, variant)
+        meta["variants"] = variants[:5]  # 最多保留最近 5 个版本
+        db.update_atom_meta(atom_id, meta)
+
+        logger.info(f"Atom rewritten for JD: {atom_id}")
+        return {"success": True, "data": {"variant": variant, "meta": meta}, "message": msg}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to rewrite atom: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -35,5 +35,10 @@ python-dotenv==1.0.1
 pydantic==2.9.0
 pydantic-settings==2.5.2
 
+# 鉴权
+PyJWT==2.9.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+
 # 日期处理
 python-dateutil==2.9.0
