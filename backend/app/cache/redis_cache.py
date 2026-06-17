@@ -135,14 +135,18 @@ class RedisCache:
 
     # ========== 简历解析缓存 ==========
 
+    # 解析输出结构版本号：每次改简历解析输出格式（如新增 education_list 多段教育）就 +1，
+    # 让旧缓存自动失效，避免「改了解析逻辑但仍命中旧格式缓存」导致字段缺失。
+    RESUME_PARSE_SCHEMA_VERSION = "v2-edu-list"
+
     def cache_resume_parse(self, resume_text: str, parsed_data: dict) -> bool:
         """缓存简历解析结果"""
-        key = self._generate_key(self.config.RESUME_PREFIX, resume_text)
+        key = self._generate_key(self.config.RESUME_PREFIX, self.RESUME_PARSE_SCHEMA_VERSION + "\x00" + (resume_text or ""))
         return self.set(key, parsed_data, self.config.RESUME_PARSE_TTL)
 
     def get_cached_resume_parse(self, resume_text: str) -> Optional[dict]:
         """获取缓存的简历解析结果"""
-        key = self._generate_key(self.config.RESUME_PREFIX, resume_text)
+        key = self._generate_key(self.config.RESUME_PREFIX, self.RESUME_PARSE_SCHEMA_VERSION + "\x00" + (resume_text or ""))
         return self.get(key)
 
     # ========== JD 解析缓存 ==========

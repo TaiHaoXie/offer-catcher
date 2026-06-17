@@ -13,6 +13,7 @@ SQLite 数据库层 - 替代 TinyDB
 
 import sqlite3
 import json
+import os
 import uuid
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -22,11 +23,12 @@ from pathlib import Path
 class SQLiteDatabase:
     """SQLite 数据库操作类"""
 
-    def __init__(self, db_path: str = "data/offer_catcher.db"):
+    def __init__(self, db_path: str = None):
         """初始化数据库连接"""
-        self.db_path = db_path
+        # 默认 data/offer_catcher.db；可用 DB_PATH 环境变量覆盖（便于受限环境/容器自定义路径）
+        self.db_path = db_path or os.getenv("DB_PATH") or "data/offer_catcher.db"
         # 确保数据目录存在
-        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_tables()
 
     def _get_conn(self) -> sqlite3.Connection:

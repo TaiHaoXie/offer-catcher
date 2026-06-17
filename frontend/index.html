@@ -9,6 +9,8 @@
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- html2pdf：定制简历「点击直接下载 PDF」。多页用像素分页；失败自动回退到打印预览 -->
+    <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -2510,6 +2512,13 @@
                 box.querySelector('#oc-btn-logout').addEventListener('click', () => {
                     setToken(null);
                     state.currentUser = null;
+                    // 退出时清掉本地缓存与内存里的简历/定制数据，防止下一个人看到上一个人的内容
+                    try { localStorage.removeItem('offerCatcherState'); } catch (e) {}
+                    state.resumeData = null;
+                    state.resumeId = null;
+                    state.resumeFile = null;
+                    state.lastGeneratedResume = null;
+                    state.atoms = [];
                     renderAuthState();
                     showJobMessage('已退出登录', 'info');
                 });
@@ -3100,12 +3109,9 @@
         // 自动保存到 localStorage
         function saveState() {
             try {
+                // 公网多人可能共用一台电脑/浏览器：不持久化简历正文等隐私数据（resumeData/resumeId），
+                // 避免下一个人打开页面看到/误用上一个人的简历。只缓存非敏感的 JD 草稿和当前 tab。
                 const saveData = {
-                    resumeData: state.resumeData,
-                    resumeId: state.resumeId,
-                    useFixedResume: state.useFixedResume,
-                    jobData: state.jobData,
-                    jobId: state.jobId,
                     currentTab: state.currentTab,
                     jdText: elements.jdInput ? elements.jdInput.value.trim() : ''
                 };
@@ -3121,15 +3127,7 @@
                 const saved = localStorage.getItem('offerCatcherState');
                 if (saved) {
                     const saveData = JSON.parse(saved);
-                    if (saveData.resumeData) {
-                        state.resumeData = saveData.resumeData;
-                        state.resumeId = saveData.resumeId;
-                        state.useFixedResume = saveData.useFixedResume ?? true;
-                    }
-                    if (saveData.jobData) {
-                        state.jobData = saveData.jobData;
-                        state.jobId = saveData.jobId;
-                    }
+                    // 简历正文不再从本地恢复（隐私 + 防串数据）：每次进来都让用户重新上传/粘贴当前简历。
                     if (saveData.currentTab) {
                         state.currentTab = saveData.currentTab;
                         // switchTab 会在后面调用，这里先跳过
@@ -3247,6 +3245,9 @@
             state.resumeId = null;
             state.lastGeneratedResume = null;
             state.useFixedResume = false;
+            // 关键：清空「粘贴文本」框里上一份简历的残留内容。
+            // 否则上传新文件后点定制，会优先读到粘贴框里的旧文本，导致名字/经历串成上一个人。
+            if (elements.resumeTextInput) elements.resumeTextInput.value = '';
 
             // 显示上传成功状态（无需显示"上传中"，文件已在本地）
             showResumeFileSuccess(file);
@@ -3431,6 +3432,11 @@
                 }
                 state.resumeData = data.data;
                 state.resumeId = data.resume_id || data.data?.id;
+                // 关键：用粘贴文本解析后，清掉上一次上传的文件对象，
+                // 避免定制时回退误用旧文件（数据串用）。
+                state.resumeFile = null;
+                state.resumeFileName = '';
+                state.recoveredResumeText = '';
                 saveState(); // 自动保存
                 showResumeSuccess(data.data);
                 renderWorkspaceResumePanel();
@@ -5521,7 +5527,22 @@
             // 抬头优先用定制结果返回的 basic_info（来自当前简历），兜底用已解析简历
             const basic = (resume.basic_info) || (state.resumeData && state.resumeData.basic_info) || {};
             const candidateName = basic.name || (state.resumeData && state.resumeData.basic_info && state.resumeData.basic_info.name) || '我的简历';
-            const contactParts = [basic.phone, basic.email, basic.location].filter(Boolean);
+            // 年龄：能从生日算出才显示，算不出就不写（与导出 PDF 保持一致）
+            let previewAge = '';
+            const _bd = basic.birth_date || basic.birthday || '';
+            const _ym = String(_bd).match(/(19|20)\d{2}/);
+            if (_ym) {
+                const _age = new Date().getFullYear() - parseInt(_ym[0], 10);
+                if (_age >= 14 && _age <= 70) previewAge = _age + ' 岁';
+            }
+            // 抬头：电话 | 邮箱 | 求职意向（默认目标岗位）| 地点 | 年龄（与导出 PDF 一致）
+            const contactParts = [
+                basic.phone,
+                basic.email,
+                basic.job_intention ? ('求职意向：' + basic.job_intention) : '',
+                basic.location,
+                previewAge
+            ].filter(Boolean);
 
             setResumeEditState('content', `
                 <div class="text-left space-y-4">
@@ -5536,6 +5557,7 @@
                     <!-- 真实简历文档：所见即所得，直接对应导出 PDF -->
                     <div class="resume-paper">
                         <div class="resume-paper-head">
+                            <h2 class="resume-paper-h2" style="margin-top:0;">个人信息 Profile</h2>
                             <h1 class="resume-paper-name">${escapeHtml(candidateName)}</h1>
                             ${contactParts.length ? `<div class="resume-paper-contact">${contactParts.map(escapeHtml).join('　|　')}</div>` : ''}
                             ${resume.headline ? `<div class="resume-paper-headline">${escapeHtml(resume.headline)}</div>` : ''}
@@ -5543,38 +5565,73 @@
 
                         ${profileSummary ? `
                             <section class="resume-paper-section">
-                                <h2 class="resume-paper-h2">个人简介</h2>
+                                <h2 class="resume-paper-h2">个人介绍 Summary</h2>
                                 <p class="resume-paper-summary">${escapeHtml(profileSummary)}</p>
                             </section>
                         ` : ''}
 
                         ${skillsLine.length ? `
                             <section class="resume-paper-section">
-                                <h2 class="resume-paper-h2">核心技能</h2>
+                                <h2 class="resume-paper-h2">核心技能 Skills</h2>
                                 <div class="resume-paper-skills">
                                     ${skillsLine.map(skill => `<span class="resume-paper-skill">${escapeHtml(skill)}</span>`).join('')}
                                 </div>
                             </section>
                         ` : ''}
 
-                        ${blocks.length ? `
-                            <section class="resume-paper-section">
-                                <h2 class="resume-paper-h2">项目 / 实习经历</h2>
-                                <div class="space-y-3 mt-2">
-                                    ${blocks.map(block => `
-                                        <div class="resume-paper-exp">
-                                            <div class="resume-paper-exp-head">
-                                                <span class="resume-paper-exp-title">${escapeHtml(block.title || '核心经历')}</span>
-                                                ${[block.company, block.type === 'work' ? '工作' : block.type === 'project' ? '项目' : ''].filter(Boolean).length ? `<span class="resume-paper-exp-meta">${[escapeHtml(block.company || ''), block.type === 'work' ? '工作' : block.type === 'project' ? '项目' : ''].filter(Boolean).join(' · ')}</span>` : ''}
-                                            </div>
-                                            ${(block.bullets || []).length ? `
-                                                <ul class="resume-paper-bullets">
-                                                    ${block.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('')}
-                                                </ul>
-                                            ` : ''}
-                                        </div>
-                                    `).join('')}
+                        ${(() => {
+                            const renderExp = (block) => `
+                                <div class="resume-paper-exp">
+                                    <div class="resume-paper-exp-head">
+                                        <span class="resume-paper-exp-title">${escapeHtml(block.title || '核心经历')}</span>
+                                        ${block.company ? `<span class="resume-paper-exp-meta">${escapeHtml(block.company)}</span>` : ''}
+                                    </div>
+                                    ${(block.bullets || []).length ? `
+                                        <ul class="resume-paper-bullets">
+                                            ${block.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('')}
+                                        </ul>
+                                    ` : ''}
                                 </div>
+                            `;
+                            const workB = blocks.filter(b => ['work', 'intern', 'internship'].includes(b.type || ''));
+                            const projB = blocks.filter(b => !['work', 'intern', 'internship'].includes(b.type || ''));
+                            // 与导出 PDF 完全一致的顺序：项目 → 实习/工作
+                            return (projB.length ? `
+                                <section class="resume-paper-section">
+                                    <h2 class="resume-paper-h2">项目 Projects</h2>
+                                    <div class="space-y-3 mt-2">${projB.map(renderExp).join('')}</div>
+                                </section>
+                            ` : '') + (workB.length ? `
+                                <section class="resume-paper-section">
+                                    <h2 class="resume-paper-h2">实习 / 工作经历 Professional Experiences</h2>
+                                    <div class="space-y-3 mt-2">${workB.map(renderExp).join('')}</div>
+                                </section>
+                            ` : '');
+                        })()}
+
+                        ${(() => {
+                            // 教育 Education：优先用多段 education_list，逐条展示（硕士+本科都显示）
+                            const list = (resume.education_list && resume.education_list.length)
+                                ? resume.education_list
+                                : (resume.education && (resume.education.school || resume.education.major) ? [resume.education] : []);
+                            if (!list.length) return '';
+                            const rows = list.map(edu => {
+                                const dr = edu.date_range || edu.graduation_year || '';
+                                const parts = [edu.school, edu.major, edu.degree, dr].filter(Boolean);
+                                return parts.length ? `<div class="resume-paper-exp"><div class="resume-paper-exp-head"><span class="resume-paper-exp-title">${parts.map(escapeHtml).join('　·　')}</span></div></div>` : '';
+                            }).join('');
+                            return rows ? `
+                                <section class="resume-paper-section">
+                                    <h2 class="resume-paper-h2">教育 Education</h2>
+                                    <div class="space-y-2 mt-2">${rows}</div>
+                                </section>
+                            ` : '';
+                        })()}
+
+                        ${resume.interests ? `
+                            <section class="resume-paper-section">
+                                <h2 class="resume-paper-h2">兴趣爱好 Interests</h2>
+                                <p class="resume-paper-summary">${escapeHtml(resume.interests)}</p>
                             </section>
                         ` : ''}
                     </div>
@@ -5634,21 +5691,61 @@
             // 兜底才用 state.resumeData，避免误用上一份简历的姓名/联系方式。
             const basic = (resume && resume.basic_info) || (state.resumeData && state.resumeData.basic_info) || {};
             const name = esc(basic.name || '我的简历');
-            const contactParts = [basic.phone, basic.email].filter(Boolean).map(esc);
+            // 年龄：仅当能从生日算出时才显示，算不出就不写（不臆造）
+            let ageText = '';
+            const bd = basic.birth_date || basic.birthday || '';
+            const ym = String(bd).match(/(19|20)\d{2}/);
+            if (ym) {
+                const age = new Date().getFullYear() - parseInt(ym[0], 10);
+                if (age >= 14 && age <= 70) ageText = age + ' 岁';
+            }
+            // 抬头第一行：联系方式 + 求职意向（默认目标岗位）+ 地点 + 年龄
+            const contactParts = [
+                basic.phone,
+                basic.email,
+                basic.job_intention ? ('求职意向：' + basic.job_intention) : '',
+                basic.location,
+                ageText
+            ].filter(Boolean).map(esc);
             const profileSummary = resume.profile_summary || resume.summary || '';
             const skillsLine = resume.skills_line || [];
             const blocks = resume.selected_atoms || [];
             const matched = resume.matched_requirements || [];
+            const edu = resume.education || {};
 
-            const blocksHtml = blocks.map(block => `
+            const renderBlock = (block) => `
                 <div class="exp">
                     <div class="exp-head">
                         <span class="exp-title">${esc(block.title || '核心经历')}</span>
-                        <span class="exp-meta">${esc([block.company, block.type].filter(Boolean).join(' · '))}</span>
+                        <span class="exp-meta">${esc(block.company || '')}</span>
                     </div>
                     ${(block.bullets || []).length ? `<ul>${block.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
                 </div>
-            `).join('');
+            `;
+            // 按 type 把经历分成「项目经历」与「实习 / 工作经历」两类
+            const workBlocks = blocks.filter(b => (b.type || '') === 'work' || (b.type || '') === 'intern' || (b.type || '') === 'internship');
+            const projectBlocks = blocks.filter(b => !(['work', 'intern', 'internship'].includes(b.type || '')));
+
+            // 教育段：优先用多段 education_list，逐条展示（硕士+本科都显示），无则用单条兜底
+            const eduList = (resume.education_list && resume.education_list.length)
+                ? resume.education_list
+                : ((edu.school || edu.major) ? [edu] : []);
+            const eduRows = eduList.map(e => {
+                const dr = e.date_range || e.graduation_year || '';
+                const p = [e.school, e.major, e.degree, dr].filter(Boolean).map(esc);
+                return p.length ? `<div class="exp"><div class="exp-head"><span class="exp-title">${p.join('　·　')}</span></div></div>` : '';
+            }).join('');
+            const eduHtml = eduRows ? `<h2>教育 Education</h2>${eduRows}` : '';
+
+            // 七段式：个人信息 → 个人介绍 → 核心技能 → 项目 → 实习/工作 → 教育 → 兴趣爱好
+            const interests = resume.interests || '';
+            const sectionsHtml =
+                (profileSummary ? `<h2>个人介绍 Summary</h2><p class="summary">${esc(profileSummary)}</p>` : '') +
+                (skillsLine.length ? `<h2>核心技能 Skills</h2><div class="skills">${skillsLine.map(s => `<span>${esc(s)}</span>`).join('')}</div>` : '') +
+                (projectBlocks.length ? `<h2>项目 Projects</h2>${projectBlocks.map(renderBlock).join('')}` : '') +
+                (workBlocks.length ? `<h2>实习 / 工作经历 Professional Experiences</h2>${workBlocks.map(renderBlock).join('')}` : '') +
+                eduHtml +
+                (interests ? `<h2>兴趣爱好 Interests</h2><p class="summary">${esc(interests)}</p>` : '');
 
             const html = `
                 <!DOCTYPE html>
@@ -5671,15 +5768,65 @@
                     @media print { body { padding: 16px 24px; } @page { margin: 12mm; } }
                 </style></head>
                 <body>
+                    <h2 style="margin-top:0;">个人信息 Profile</h2>
                     <h1>${name}</h1>
                     ${contactParts.length ? `<div class="contact">${contactParts.join(' &nbsp;|&nbsp; ')}</div>` : ''}
-                    ${profileSummary ? `<h2>个人简介</h2><p class="summary">${esc(profileSummary)}</p>` : ''}
-                    ${skillsLine.length ? `<h2>核心技能</h2><div class="skills">${skillsLine.map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
-                    ${blocksHtml ? `<h2>项目 / 实习经历</h2>${blocksHtml}` : ''}
-                    ${matched.length ? `<h2>与岗位匹配的能力</h2><div class="skills">${matched.map(s => `<span>${esc(s)}</span>`).join('')}</div>` : ''}
+                    ${sectionsHtml}
                 </body></html>
             `;
 
+            // 导出 PDF：优先「点击直接下载」。用 html2pdf 的字符串渲染模式（由库自建容器，
+            // 之前实测此模式能正确截到内容、不空白），配 A4 宽 + css/legacy 自动分页。
+            // 任何失败都回退到浏览器原生打印预览，保证一定能导出（双保险，公网也稳）。
+            const safeName = (basic.name || '我的简历');
+            const docHtml = `<div style="width:794px;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;padding:48px 56px;line-height:1.7;font-size:13px;background:#fff;box-sizing:border-box;">
+                <style>
+                    h1{font-size:22px;margin-bottom:4px;}
+                    .contact{color:#6b7280;font-size:12px;margin-bottom:16px;}
+                    h2{font-size:14px;color:#111827;border-bottom:2px solid #111827;padding-bottom:4px;margin:18px 0 10px;}
+                    .summary{color:#374151;}
+                    .skills{display:flex;flex-wrap:wrap;gap:6px;}
+                    .skills span{border:1px solid #d1d5db;border-radius:6px;padding:2px 8px;font-size:12px;}
+                    .exp{margin-bottom:12px;break-inside:avoid;page-break-inside:avoid;}
+                    .exp-head{display:flex;justify-content:space-between;align-items:baseline;}
+                    .exp-title{font-weight:700;}
+                    .exp-meta{color:#6b7280;font-size:12px;}
+                    ul{margin:4px 0 0 18px;}
+                    li{margin-bottom:3px;}
+                </style>
+                <h2 style="margin-top:0;">个人信息 Profile</h2>
+                <h1>${name}</h1>
+                ${contactParts.length ? `<div class="contact">${contactParts.join(' &nbsp;|&nbsp; ')}</div>` : ''}
+                ${sectionsHtml}
+            </div>`;
+
+            if (typeof html2pdf !== 'undefined') {
+                try {
+                    html2pdf().set({
+                        margin: 0,
+                        filename: `${safeName}-定制简历.pdf`,
+                        image: { type: 'jpeg', quality: 0.98 },
+                        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 794 },
+                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                        // avoid 让 html2pdf 在分页时把「跨越页边界」的整块（经历/教育条目、段标题）
+                        // 整体推到下一页，避免一行被页边界横切（如教育只剩本科、硕士被切到第二页看不到）。
+                        pagebreak: { mode: ['css', 'legacy'], avoid: ['.exp', 'h2'] }
+                    }).from(docHtml, 'string').save().catch(() => {
+                        showJobMessage('直接下载失败，已为你打开打印预览（可另存为 PDF）', 'info');
+                        _printResumeHtml(html);
+                    });
+                    return;
+                } catch (e) {
+                    _printResumeHtml(html);
+                    return;
+                }
+            }
+            // html2pdf 没加载出来（如断网/CDN挂）→ 回退打印预览
+            _printResumeHtml(html);
+        }
+
+        // 打印方式导出（html2pdf 不可用时的回退）：新窗口或隐藏 iframe 调起打印
+        function _printResumeHtml(html) {
             const printWindow = window.open('', '_blank', 'width=900,height=1200');
             if (printWindow) {
                 printWindow.document.open();

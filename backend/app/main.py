@@ -60,7 +60,8 @@ from fastapi import Depends
 
 # 确保日志目录存在（使用绝对路径）
 import os
-LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
+# 默认写到 backend/logs；可用 LOG_DIR 环境变量覆盖（便于受限环境/容器自定义路径）
+LOG_DIR = os.getenv("LOG_DIR") or os.path.join(os.path.dirname(os.path.dirname(__file__)), 'logs')
 os.makedirs(LOG_DIR, exist_ok=True)
 
 logging.basicConfig(
@@ -404,6 +405,9 @@ async def parse_resume_text(request: ParseResumeTextRequest):
             except Exception as e2:
                 raise ValueError(f"所有解析器都失败了: {e2}")
 
+        # 从原文抓「兴趣爱好」存进简历，供定制简历的「兴趣爱好 Interests」段使用（抓不到则留空）
+        resume_data["interests"] = _extract_interests_from_text(request.text)
+
         # 保存到数据库
         resume_id = db.save_resume(resume_data)
 
@@ -685,7 +689,9 @@ async def stream_match_from_upload(
         filename = resume_file.filename or "resume"
     one_shot_matcher = get_one_shot_matcher()
     db = get_db()
-    atoms = db.list_atoms()
+    # 只取当前登录用户自己的经历原子，绝不能用 list_atoms() 拿全量——
+    # 否则匹配分析会把别人的原子内容当参考喂给 AI，造成多账号数据串用（公网必现）。
+    atoms = db.list_atoms(user_id=current_user["id"])
 
     # 生成唯一会话 ID 用于断线重连
     import uuid
@@ -955,9 +961,39 @@ def _generate_strategy(total_score: float, match_level: str) -> str:
         return "不建议投递，匹配度较低。建议选择更符合当前背景的岗位，或进行系统性技能提升。"
 
 
+def _extract_interests_from_text(resume_text: str) -> str:
+    """从简历原文里抓「兴趣爱好/爱好/特长」等，抓到才返回；抓不到留空，绝不编造。"""
+    m = re.search(
+        r"(?:兴趣爱好|业余爱好|个人爱好|个人兴趣|兴趣与爱好|爱好特长|特长爱好|爱好|特长|兴趣)"
+        r"[：:\s]*([^\n]{2,80})",
+        resume_text or ""
+    )
+    if not m:
+        return ""
+    cand = m.group(1).strip(" ：:、，,。.")
+    if cand and "求职" not in cand and "方向" not in cand:
+        return cand
+    return ""
+
+
 def _infer_job_title_from_text(jd_text: str) -> str:
     lines = [line.strip("•- \t") for line in (jd_text or "").splitlines() if line.strip()]
-    return lines[0] if lines else "目标岗位"
+    if not lines:
+        return "目标岗位"
+    title = lines[0]
+    # 清洗成干净的岗位名，避免把整行 JD（含"校招/硕士/熟悉LLM"等）都当成求职意向：
+    # 1) 去掉"职位/岗位/招聘"等前缀标签
+    title = re.sub(r"^(职位|岗位|招聘岗位|招聘职位|岗位名称|职位名称)\s*[:：]?\s*", "", title)
+    # 2) 把括号及其内容（如"（校招）""(社招)"）替换成空格——用空格而非删空，
+    #    避免"工程师（校招）熟悉Spring"删括号后粘成"工程师熟悉Spring"，导致下一步切不开。
+    title = re.sub(r"[（(].*?[)）]", " ", title)
+    # 3) 按常见分隔符/空格切，取第一段作为岗位名（"AI产品经理 校招 硕士" -> "AI产品经理"）
+    title = re.split(r"[\s,，、|/]+", title.strip())[0] if title.strip() else title
+    title = title.strip()
+    # 4) 过长则截断兜底
+    if len(title) > 20:
+        title = title[:20]
+    return title or "目标岗位"
 
 
 def _extract_requirement_groups(match_result: Dict[str, Any], jd_text: str) -> Dict[str, List[str]]:
@@ -1059,17 +1095,91 @@ def _extract_basic_info_from_text(resume_text: str) -> Dict[str, str]:
     return info
 
 
+def _loads_truncated_json(text: str) -> Dict[str, Any]:
+    """抢救被 max_tokens 截断的 JSON：从首个 { 起逐字符扫描，
+    记录最后一个处于安全位置（对象/数组元素边界）的截断点，再补齐闭合括号后解析。
+    用于定制简历 AI 输出过长被截断时，尽量保住已生成的字段，避免直接丢失。"""
+    if not text:
+        return {}
+    start = text.find("{")
+    if start == -1:
+        return {}
+    s = text[start:]
+    in_str = False
+    escape = False
+    stack = []  # 记录 { 和 [
+    last_safe = -1  # 最后一个安全可截断位置（某个元素刚结束）
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch in "{[":
+            stack.append(ch)
+        elif ch in "}]":
+            if stack:
+                stack.pop()
+            last_safe = i + 1
+        elif ch == ",":
+            last_safe = i  # 逗号前是一个完整元素
+    # 先尝试整体补齐
+    for candidate in (s, s[:last_safe] if last_safe > 0 else None):
+        if not candidate:
+            continue
+        fixed = candidate
+        # 去掉结尾多余逗号
+        fixed = re.sub(r",\s*$", "", fixed)
+        # 按未闭合栈补齐括号
+        tmp_stack = []
+        in_s = False
+        esc = False
+        for ch in fixed:
+            if esc:
+                esc = False
+                continue
+            if ch == "\\":
+                esc = True
+                continue
+            if ch == '"':
+                in_s = not in_s
+                continue
+            if in_s:
+                continue
+            if ch in "{[":
+                tmp_stack.append(ch)
+            elif ch in "}]":
+                if tmp_stack:
+                    tmp_stack.pop()
+        closing = "".join("}" if c == "{" else "]" for c in reversed(tmp_stack))
+        if in_s:
+            fixed += '"'
+        try:
+            return json.loads(fixed + closing)
+        except Exception:
+            continue
+    return {}
+
+
 async def _build_customize_resume_with_ai(
     resume_text: str,
     jd_text: str,
     match_result: Dict[str, Any],
     atom_refs: Optional[List[Dict[str, Any]]] = None,
+    fallback_basic: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """基于 AI 的定制简历改写：严格只允许基于原简历改写，不允许编造经历。
 
     复用 one_shot 引擎的 Kimi 配置；输出固定 JSON，便于前端稳定渲染与导出 PDF。
     失败时由调用方回退到规则版兜底。
     atom_refs：用户在「经历原子库」里针对该 JD 改写好的表达，作为优先参考喂给模型。
+    fallback_basic：从简历库取到的真实 basic_info（姓名/电话/邮箱），正则猜不到时兜底。
     """
     from litellm import acompletion
 
@@ -1126,7 +1236,7 @@ async def _build_customize_resume_with_ai(
     {{
       "title": "经历/项目名称（必须来自原简历）",
       "company": "公司/组织，没有则空字符串",
-      "type": "work|project",
+      "type": "work|project（实习/工作经历填 work，项目经历填 project，只能用这两个英文值之一）",
       "bullets": ["改写后的 bullet，2-4 条，场景-动作-结果结构"]
     }}
   ],
@@ -1135,7 +1245,8 @@ async def _build_customize_resume_with_ai(
 }}
 
 要求：
-- selected_atoms 必须来自原简历的真实经历，最多 4 段，最相关的放最前。
+- selected_atoms 必须来自原简历的真实经历，最多 6 段，最相关的放最前；实习/工作与项目经历都要尽量保留，不要漏掉。
+- type 只能填 "work" 或 "project" 两个英文值之一，不要填中文或其它写法。
 - skills_line 只列原简历里出现或可合理归纳的技能，不要塞 JD 里但简历没有的。
 - 所有字段必须给出，没有内容用空数组或空字符串。
 """
@@ -1147,7 +1258,7 @@ async def _build_customize_resume_with_ai(
             {"role": "user", "content": prompt},
         ],
         temperature=0.3,
-        max_tokens=2500,
+        max_tokens=4000,
         api_key=api_key,
         api_base=api_base,
         timeout=60,
@@ -1161,22 +1272,50 @@ async def _build_customize_resume_with_ai(
     try:
         data = json.loads(stripped)
     except Exception:
+        data = None
+        # 尝试①：截取最外层 {...} 再解析
         m = re.search(r"\{[\s\S]*\}", stripped)
-        if not m:
-            raise
-        data = json.loads(m.group(0))
+        if m:
+            try:
+                data = json.loads(m.group(0))
+            except Exception:
+                data = None
+        # 尝试②：清洗常见瑕疵（全角引号、控制字符、尾逗号）后再解析
+        if not data:
+            cleaned = (m.group(0) if m else stripped)
+            cleaned = cleaned.replace("\u201c", '"').replace("\u201d", '"')  # 全角双引号
+            cleaned = re.sub(r"[\x00-\x1f]", " ", cleaned)  # 控制字符
+            cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)  # 尾逗号
+            try:
+                data = json.loads(cleaned)
+            except Exception:
+                data = None
+        # 尝试③：截断抢救（针对真被 max_tokens 截断的情况）
+        if not data:
+            data = _loads_truncated_json(stripped)
+    if not isinstance(data, dict):
+        data = {}
+    if not data.get("selected_atoms") and not data.get("headline"):
+        logger.warning(f"[customize] JSON 解析疑似失败，原始输出片段: {stripped[:400]}")
 
     # 规范化为前端已支持的结构
     target_job = _infer_job_title_from_text(jd_text)
     selected = data.get("selected_atoms") or []
     draft_blocks = []
-    for atom in selected[:4]:
+    for atom in selected[:6]:
         if not isinstance(atom, dict):
             continue
+        # 归一化经历类型：LLM 返回的 type 写法五花八门（"Work"/"实习"/"intern "/"工作经历"/"项目"），
+        # 统一映射成 work / project，避免前端严格匹配 === 'work' 时把实习/工作误分到「项目」栏。
+        raw_type = str(atom.get("type") or "").strip().lower()
+        if any(k in raw_type for k in ("work", "intern", "job", "实习", "工作", "兼职", "experience")):
+            norm_type = "work"
+        else:
+            norm_type = "project"
         draft_blocks.append({
             "title": str(atom.get("title") or "核心经历"),
             "company": str(atom.get("company") or ""),
-            "type": str(atom.get("type") or "project"),
+            "type": norm_type,
             "reasons": [],
             "bullets": [str(b) for b in (atom.get("bullets") or []) if str(b).strip()][:4],
             "skills": [],
@@ -1189,9 +1328,83 @@ async def _build_customize_resume_with_ai(
     if do_not_fake:
         summary_bullets.append(f"以下内容不要硬写，避免被追问穿帮：{'、'.join(do_not_fake[:2])}")
 
+    # 抬头基本信息：先用正则从原文提取，缺失项用简历库里的真实 basic_info 兜底
+    basic_info = _extract_basic_info_from_text(resume_text)
+    if fallback_basic:
+        # 姓名/电话/邮箱：正则猜不到时用库里真实值兜底
+        for key in ("name", "phone", "email"):
+            if not basic_info.get(key) and fallback_basic.get(key):
+                basic_info[key] = str(fallback_basic.get(key))
+        # 地点 / 教育相关字段：直接透传简历库里的真实值，供六段式抬头与教育段使用
+        for key in ("location", "university", "major", "degree", "graduation_year", "birth_date"):
+            if fallback_basic.get(key):
+                basic_info[key] = str(fallback_basic.get(key))
+    # 求职意向：默认填当前 JD 推断出的目标岗位（不编造，来自用户正在投的岗位）
+    if not basic_info.get("job_intention") and target_job:
+        basic_info["job_intention"] = target_job
+
+    # 教育段：优先用「完整教育数组」展示多段学历（硕士+本科），避免只剩一条。
+    education = {}          # 兼容旧前端：最高学历单条
+    education_list = []     # 新：多段教育，供导出依次展示
+    if fallback_basic:
+        education = {
+            "school": fallback_basic.get("university") or fallback_basic.get("school") or "",
+            "major": fallback_basic.get("major") or "",
+            "degree": fallback_basic.get("degree") or "",
+            "graduation_year": fallback_basic.get("graduation_year") or "",
+        }
+        for edu in (fallback_basic.get("_education_list") or []):
+            if not isinstance(edu, dict):
+                continue
+            end = str(edu.get("end_date") or "")
+            start = str(edu.get("start_date") or "")
+            # 起止年份：从 start/end 各取 4 位年份，拼成「2020 - 2024」；缺失则尽量展示已有的
+            _ms = re.search(r"(19|20)\d{2}", start)
+            _me = re.search(r"(19|20)\d{2}", end)
+            sy = _ms.group(0) if _ms else ""
+            ey = _me.group(0) if _me else ""
+            date_range = (f"{sy} - {ey}" if sy and ey else (sy or ey))
+            education_list.append({
+                "school": edu.get("school") or "",
+                "major": edu.get("major") or "",
+                "degree": edu.get("degree") or "",
+                "graduation_year": ey,
+                "date_range": date_range,
+                "_start_year": sy,
+            })
+        # 排序：学历从低到高（本科 → 硕士 → 博士），同级按入学年份从早到晚。
+        # 解析返回的数组顺序不固定（常把硕士放前面），不排序会导致「研究生在上、本科在下」的倒序。
+        _deg_rank = {"大专": 1, "专科": 1, "本科": 2, "学士": 2, "bachelor": 2,
+                     "硕士": 3, "研究生": 3, "master": 3, "博士": 4, "phd": 4, "doctor": 4}
+        def _edu_rank(e):
+            d = str(e.get("degree", "")).lower()
+            r = 0
+            for k, v in _deg_rank.items():
+                if k in d:
+                    r = v
+                    break
+            ys = str(e.get("_start_year") or "")
+            return (r, int(ys) if ys.isdigit() else 9999)
+        education_list.sort(key=_edu_rank)
+        for e in education_list:
+            e.pop("_start_year", None)
+        # 若没有多段数据，至少用最高学历单条兜底，保证有内容
+        if not education_list and (education.get("school") or education.get("major")):
+            education_list = [education]
+
+    # 兴趣爱好：优先用简历库里已抓好的（解析时存的），其次从当前文本兜底抓。抓不到留空，绝不编造。
+    interests = ""
+    if fallback_basic and fallback_basic.get("_interests"):
+        interests = str(fallback_basic.get("_interests"))
+    if not interests:
+        interests = _extract_interests_from_text(resume_text)
+
     return {
         "target_job": target_job,
-        "basic_info": _extract_basic_info_from_text(resume_text),
+        "basic_info": basic_info,
+        "education": education,
+        "education_list": education_list,
+        "interests": interests,
         "headline": str(data.get("headline") or f"面向 {target_job} 的定制简历草稿"),
         "summary": str(data.get("profile_summary") or "已基于你的原始简历与目标 JD 生成定制草稿，仅做真实经历的改写与重排。"),
         "profile_summary": str(data.get("profile_summary") or ""),
@@ -1413,19 +1626,28 @@ async def customize_resume(request: CustomizeResumeRequest):
     """
     # 1) 取原始简历文本：优先 resume_text，其次用 resume_id 从库里拼
     resume_text = (request.resume_text or "").strip()
-    if not resume_text and request.resume_id:
+    fallback_basic: Dict[str, Any] = {}
+    if request.resume_id:
         try:
             record = get_db().get_resume(request.resume_id)
             if record:
-                parts = []
-                basic = record.get("basic_info", {}) or {}
-                parts.append(" ".join(str(v) for v in basic.values() if v))
-                parts.append("技能：" + "、".join(record.get("skills", []) or []))
-                for exp in record.get("experience", []) or []:
-                    parts.append(" ".join(str(exp.get(k, "")) for k in ("company", "position", "duration", "description")))
-                for proj in record.get("projects", []) or []:
-                    parts.append(" ".join(str(proj.get(k, "")) for k in ("name", "role", "description")))
-                resume_text = "\n".join(p for p in parts if p.strip())
+                fallback_basic = record.get("basic_info", {}) or {}
+                # 把「完整教育数组」和「兴趣爱好」一并带上，供导出展示
+                fallback_basic = {
+                    **fallback_basic,
+                    "_education_list": record.get("education_list") or [],
+                    "_interests": record.get("interests") or "",
+                }
+                if not resume_text:
+                    parts = []
+                    basic = fallback_basic
+                    parts.append(" ".join(str(v) for k, v in basic.items() if v and not k.startswith("_")))
+                    parts.append("技能：" + "、".join(record.get("skills", []) or []))
+                    for exp in record.get("experience", []) or []:
+                        parts.append(" ".join(str(exp.get(k, "")) for k in ("company", "position", "duration", "description")))
+                    for proj in record.get("projects", []) or []:
+                        parts.append(" ".join(str(proj.get(k, "")) for k in ("name", "role", "description")))
+                    resume_text = "\n".join(p for p in parts if p.strip())
         except Exception as e:
             logger.warning(f"读取简历用于定制失败: {e}")
 
@@ -1441,9 +1663,24 @@ async def customize_resume(request: CustomizeResumeRequest):
                     bullets = variants[0].get("bullets") or []
                     if bullets:
                         atom_refs.append({"title": atom.get("title", ""), "bullets": bullets})
+
+            # 缓存 key 用「简历全文 + JD + 原子参考」内容哈希，不含 user_id。
+            # 只有三者完全一字不差相同才命中 —— 相同输入本就该给相同输出，绝不会串到别人。
+            # 重复点「一键优化」时直接返回缓存，省掉一次 v1-8k 调用（降本）。
+            # 版本号 customize-v2-edu：定制简历输出结构变化（新增多段教育 education_list + 起止年份 date_range）
+            # 后必须 +1，否则旧版本缓存（无 education_list / date_range）会被原样返回，导致「硕士和年份都没了」。
+            cache_seed = "customize-v2-edu\x00" + (resume_text or "") + "\x00" + (request.jd_text or "") + "\x00" + json.dumps(atom_refs, ensure_ascii=False, sort_keys=True)
+            cached_payload = cache.get_cached_llm_result(cache_seed)
+            if cached_payload:
+                logger.info("[customize] 命中缓存，跳过 AI 调用（降本）")
+                return {"success": True, "data": cached_payload, "message": "定制简历草稿生成完成（缓存）", "cached": True}
+
             payload = await _build_customize_resume_with_ai(
-                resume_text, request.jd_text, request.match_result or {}, atom_refs
+                resume_text, request.jd_text, request.match_result or {}, atom_refs, fallback_basic
             )
+            # 仅缓存成功的 AI 结果（engine=ai），规则兜底版不缓存，避免把降级结果固化
+            if isinstance(payload, dict) and payload.get("engine") == "ai":
+                cache.cache_llm_result(cache_seed, payload)
             return {"success": True, "data": payload, "message": "定制简历草稿生成完成"}
         except Exception as e:
             logger.warning(f"AI 定制简历失败，回退规则版: {e}")
@@ -2299,8 +2536,20 @@ if os.path.isdir(_ASSETS_DIR):
 
 @app.get("/")
 async def serve_index():
-    """返回前端首页"""
-    return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+    """返回前端首页。
+
+    关键：禁止缓存 index.html。否则更新前端后，用户浏览器可能继续运行被缓存的旧版 JS，
+    出现「后端已修但用户仍踩老 bug / 看到旧数据」（如教育只剩一条、导出截断等），
+    公网部署时这个问题尤其隐蔽。HTML 不缓存即可保证每次都加载最新逻辑。
+    """
+    return FileResponse(
+        os.path.join(FRONTEND_DIR, "index.html"),
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 # ========== 应用启动 ==========

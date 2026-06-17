@@ -203,17 +203,29 @@ JSON 格式如下：
         # 教育背景
         education = result.get("education", [])
         if education and isinstance(education, list) and len(education) > 0:
-            # 取最高学历（通常最后一个）
-            edu = education[-1]
+            # 按学位高低挑「最高学历」填进 basic_info（供匹配/抬头用），
+            # 不能简单取最后一条 —— 数组顺序不固定，最后一条常是较早的本科。
+            degree_rank = {"博士": 4, "phd": 4, "硕士": 3, "研究生": 3, "master": 3,
+                           "本科": 2, "学士": 2, "bachelor": 2, "大专": 1, "专科": 1}
+            def _rank(e):
+                d = str(e.get("degree", "")).lower()
+                for k, v in degree_rank.items():
+                    if k in d:
+                        return v
+                return 0
+            top_edu = max(education, key=_rank)
             normalized["basic_info"].update({
-                "university": edu.get("school", ""),
-                "major": edu.get("major", ""),
-                "degree": edu.get("degree", ""),
-                "graduation_year": edu.get("end_date", "")[-4:] if edu.get("end_date") else ""
+                "university": top_edu.get("school", ""),
+                "major": top_edu.get("major", ""),
+                "degree": top_edu.get("degree", ""),
+                "graduation_year": top_edu.get("end_date", "")[-4:] if top_edu.get("end_date") else ""
             })
-            normalized["education"] = edu
+            # 关键：保留「完整教育数组」，不要压成一条，否则导出会丢掉其他学历（如硕士）。
+            normalized["education"] = top_edu          # 兼容旧逻辑：单条=最高学历
+            normalized["education_list"] = education   # 新增：完整多段教育，供导出展示
         else:
             normalized["education"] = {"school": "", "major": "", "degree": "", "gpa": "", "courses": []}
+            normalized["education_list"] = []
 
         # 工作经历
         normalized["experience"] = result.get("experience", [])
