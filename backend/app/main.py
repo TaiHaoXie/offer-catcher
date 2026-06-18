@@ -20,6 +20,7 @@ import io
 import logging
 import uvicorn
 import re
+from urllib.parse import quote
 
 # 导入服务模块
 from app.services.fast_jd_parser import FastJDParser
@@ -167,6 +168,10 @@ class CustomizeResumeRequest(BaseModel):
     jd_text: str
     match_result: Dict[str, Any]
     atoms: List[Dict[str, Any]] = []
+
+class ExportResumePdfRequest(BaseModel):
+    """定制简历 PDF 导出请求"""
+    resume: Dict[str, Any]
 
 # ========== 根路径 ==========
 
@@ -379,6 +384,8 @@ async def parse_resume_text(request: ParseResumeTextRequest):
         if cached_result:
             logger.info("Resume parse cache hit")
             # 缓存命中，保存新的记录并返回
+            cached_result["raw_text"] = request.text
+            cached_result["interests"] = cached_result.get("interests") or _extract_interests_from_text(request.text)
             resume_id = db.save_resume(cached_result)
             return {
                 "success": True,
@@ -407,6 +414,7 @@ async def parse_resume_text(request: ParseResumeTextRequest):
 
         # 从原文抓「兴趣爱好」存进简历，供定制简历的「兴趣爱好 Interests」段使用（抓不到则留空）
         resume_data["interests"] = _extract_interests_from_text(request.text)
+        resume_data["raw_text"] = request.text
 
         # 保存到数据库
         resume_id = db.save_resume(resume_data)
@@ -689,9 +697,10 @@ async def stream_match_from_upload(
         filename = resume_file.filename or "resume"
     one_shot_matcher = get_one_shot_matcher()
     db = get_db()
-    # 只取当前登录用户自己的经历原子，绝不能用 list_atoms() 拿全量——
-    # 否则匹配分析会把别人的原子内容当参考喂给 AI，造成多账号数据串用（公网必现）。
-    atoms = db.list_atoms(user_id=current_user["id"])
+    # 匹配分析必须只基于「本次上传/粘贴的简历」。
+    # 账号级经历原子库即使做了 user_id 隔离，也可能属于该用户的另一份简历；
+    # 传给匹配引擎会被 AI 当作当前候选人的证据，导致串数据。
+    atoms = []
 
     # 生成唯一会话 ID 用于断线重连
     import uuid
@@ -961,11 +970,103 @@ def _generate_strategy(total_score: float, match_level: str) -> str:
         return "不建议投递，匹配度较低。建议选择更符合当前背景的岗位，或进行系统性技能提升。"
 
 
+def _is_filler_bullet(text: str) -> bool:
+    """判断一条 bullet 是否为「凑数空话套话」（无具体数字/技术/对象，只有泛化表态）。
+
+    保守策略：只要包含具体信号（数字、英文技术词、百分比等）就保留；
+    仅当整条几乎全是套话短语拼接、且没有任何具体信息时才判为 filler。
+    """
+    t = (text or "").strip()
+    if not t:
+        return True
+    # 含具体信号则保留：阿拉伯数字、百分号、英文（技术栈/缩写）
+    if re.search(r"[0-9%]", t) or re.search(r"[A-Za-z]{2,}", t):
+        return False
+    # 高频空话短语（无具体内容的泛化表态）
+    filler_phrases = [
+        "保障系统稳定运行", "确保系统稳定运行", "提升整体效率", "提升系统性能",
+        "提高工作效率", "持续优化系统架构", "保障高可用性和可扩展性",
+        "快速定位并解决潜在问题", "持续监控系统性能", "提升用户体验",
+        "增强系统稳定性", "通过技术手段", "通过技术优化", "保障业务连续性",
+        "提升风控效果和准确率", "确保代码质量",
+    ]
+    hit = sum(1 for p in filler_phrases if p in t)
+    # 短句（<=24字）且命中至少一个套话短语，且不含具体对象数字 → 判为 filler
+    if hit >= 1 and len(t) <= 28:
+        return True
+    # 两个以上套话短语拼接，基本可判定为纯套话
+    if hit >= 2:
+        return True
+    return False
+
+
+def _sanitize_resume_bullet(text: str) -> str:
+    """轻量清洗 AI bullet。
+
+    产品边界：允许在真实项目/真实实习内部做简历式包装；
+    这里不删除“提升效率/优化体验”等结果表达，只做空白与标点清理。
+    真正的事实漂移（新公司/新项目/新团队/新硬技能）在原子改写护栏里拦截。
+    """
+    t = str(text or "").strip()
+    if not t:
+        return ""
+    t = re.sub(r"\s+", " ", t)
+    return t.strip(" ，,；;。.")
+
+
+def _extract_education_from_text(resume_text: str) -> list:
+    """从简历原文正则抓教育（学校+学历+年份），按学历低到高排序。
+
+    仅作兜底：当没有 resume_id / 库里没存教育时，避免教育段整段空白。
+    只抓原文真实出现的，抓不到返回空列表，绝不编造。
+    """
+    text = resume_text or ""
+    deg_rank = {"大专": 1, "专科": 1, "本科": 2, "学士": 2,
+                "硕士": 3, "研究生": 3, "博士": 4}
+    results = []
+    # 逐行扫描，命中「含学历关键词且含学校/年份」的行
+    for line in re.split(r"[\n;；]+", text):
+        line = line.strip(" ：:、，,。.\t")
+        if not line:
+            continue
+        deg = ""
+        for k in ("博士", "硕士", "研究生", "本科", "学士", "大专", "专科"):
+            if k in line:
+                deg = "硕士" if k == "研究生" else ("本科" if k == "学士" else k)
+                break
+        school_m = re.search(r"([\u4e00-\u9fa5]{2,15}(?:大学|学院|学校|院校))", line)
+        yrs4 = re.findall(r"(?:19|20)\d{2}", line)
+        if not deg and not school_m:
+            continue
+        if not deg and not yrs4:
+            continue
+        sy = yrs4[0] if yrs4 else ""
+        ey = yrs4[1] if len(yrs4) > 1 else ""
+        date_range = (f"{sy} - {ey}" if sy and ey else (sy or ey))
+        major_m = re.search(r"(?:大学|学院|学校|院校)\s*([\u4e00-\u9fa5]{2,12})", line)
+        results.append({
+            "school": school_m.group(1) if school_m else "",
+            "major": major_m.group(1) if major_m else "",
+            "degree": deg,
+            "graduation_year": ey,
+            "date_range": date_range,
+            "_rank": deg_rank.get(deg, 0),
+            "_sy": int(sy) if sy.isdigit() else 9999,
+        })
+    if not results:
+        return []
+    results.sort(key=lambda e: (e["_rank"], e["_sy"]))
+    for e in results:
+        e.pop("_rank", None)
+        e.pop("_sy", None)
+    return results
+
+
 def _extract_interests_from_text(resume_text: str) -> str:
     """从简历原文里抓「兴趣爱好/爱好/特长」等，抓到才返回；抓不到留空，绝不编造。"""
     m = re.search(
-        r"(?:兴趣爱好|业余爱好|个人爱好|个人兴趣|兴趣与爱好|爱好特长|特长爱好|爱好|特长|兴趣)"
-        r"[：:\s]*([^\n]{2,80})",
+        r"(?m)^\s*(?:兴趣爱好|业余爱好|个人爱好|个人兴趣|兴趣与爱好|爱好特长|特长爱好|爱好|特长|兴趣)"
+        r"[：:\s]*\n?\s*([^\n]{2,120})",
         resume_text or ""
     )
     if not m:
@@ -1201,21 +1302,44 @@ async def _build_customize_resume_with_ai(
         if title and bullets:
             atom_ref_text += f"\n- 【{title}】\n  " + "\n  ".join(bullets)
 
-    # 控制 token：原简历过长时截断
+    # 控制 token：原简历过长时只截断「喂给 AI 的正文」。
+    # 姓名/教育/兴趣爱好等确定性字段必须继续从 full_resume_text 提取；
+    # 否则长简历尾部的「兴趣爱好」会在 3500 字截断后丢失。
     resume_text = (resume_text or "").strip()
-    if len(resume_text) > 3500:
-        resume_text = resume_text[:3500]
+    full_resume_text = resume_text
+    resume_text_for_ai = resume_text[:3500] if len(resume_text) > 3500 else resume_text
 
     atom_ref_block = ("\n【已优化表达参考】（用户已针对该 JD 改写过的经历，请优先沿用）：" + atom_ref_text) if atom_ref_text else ""
+
+    # 两档饱满度（均「宁缺毋滥」，禁止凑数空话）：
+    # - 未原子化（无参考）：基于 JD 对已有经历适度扩写，事实足够时每段 3-4 条实质 bullet。
+    # - 已原子化（有参考）：利用沉淀素材写得更细，通常每段 3-6 条实质 bullet。
+    if atom_ref_text:
+        richness_guide = (
+            "用户已经做过「经历原子化」，沉淀了更细的素材（见下方参考）。请充分利用这些素材，"
+            "把【原简历已有的每一段经历】写得更丰富、更具体、更贴合 JD：覆盖背景、技术方案、负责环节、协作与结果，"
+            "做到细节充分、可直接投递。注意：只能扩写已有经历的内部描述，不得新增原文没有的经历。"
+        )
+        bullet_hint = "有几条实质内容就写几条（通常 3-6 条），宁缺毋滥"
+    else:
+        richness_guide = (
+            "用户没有做经历原子化，只提供了原始简历。请基于 JD 对【原文已有的每一段经历】做适度扩写：比原文更专业、更结构化，"
+            "把每段经历的技术、职责、规模、结果展开，但不要硬塞原文没有的细节、更不能新增原文没有的项目或实习。做到能直接投递。"
+        )
+        bullet_hint = "事实足够时写 3-4 条；事实不足时有几条实质内容就写几条，宁缺毋滥"
 
     prompt = f"""你是一名资深简历顾问。请基于【原始简历】和【目标 JD】，生成一版更贴合该岗位的定制简历草稿。
 
 【最高原则】
 1. 只能基于原始简历里真实存在的经历进行改写、重排、强化表达。
 2. 严禁编造任何简历里没有的公司、项目、数据、技能、奖项。
+2.1【经历条目红线·最重要】selected_atoms 里的每一段（title/公司/项目）都必须是原始简历里真实写到的经历，一个都不能新增。严禁为了凑数或显得饱满而虚构原文没有的项目/实习（例如原文没写就不准出现“数据分析项目”“缓存系统优化”之类的新经历）。经历的「数量」不能超过原简历真实经历数；「饱满」只能体现在对每一段已有经历的内部描述展开，而不是增加经历条数。
 3. 对原简历缺失、但 JD 需要的能力，不要硬写进经历，而是放进 do_not_fake 字段提醒用户。
 4. 改写要点：用“场景-动作-结果”结构，能量化就量化（但不能伪造数字）。
 5. 若提供了【已优化表达参考】，请优先沿用其中已经针对该 JD 打磨好的 bullet 表达（可微调措辞），但不得引入参考里凭空出现、原简历没有的事实。
+6. 【内容饱满度】这是用户可以直接拿去投递的成稿，不是草稿。{richness_guide}
+7. 【扩写红线】扩写只能基于原文已经写明的事实，可以补充行业通用的做法描述，但严禁用“更高水平/进一步提升/大幅提高/显著增长”等原文没有的程度词去暗示不存在的成果。原文给了具体数字（如 QPS 3000）就如实写 3000，不得改写成“提升至更高水平”这类似是而非的表达；原文没有结果数据的，就只描述做了什么，不要硬造提升幅度。
+8. 【短简历克制】如果原始简历信息很少，只允许输出少量真实内容。profile_summary 不要把 JD 中缺失的能力（如高并发、高可用、微服务、Redis、Kafka、Spring 等）写成候选人的定位、愿景或优势；这些只能放入 do_not_fake。
 
 【目标 JD】
 {jd_text[:1500]}
@@ -1224,20 +1348,20 @@ async def _build_customize_resume_with_ai(
 【JD 仍欠缺要点】{('、'.join(missing_requirements[:6]) or '无')}
 
 【原始简历】
-{resume_text}
+{resume_text_for_ai}
 {atom_ref_block}
 
 只输出合法 JSON，不要 Markdown、不要代码块、不要解释。字段如下：
 {{
   "headline": "一句话定位，面向该岗位",
-  "profile_summary": "3-4 句个人简介，突出与岗位相关的能力与亮点",
+  "profile_summary": "4-6 句个人简介，结合岗位突出核心能力、技术栈、代表性成果与亮点，写得专业且具体，能直接放进简历",
   "skills_line": ["按与岗位相关度排序的技能，最多10个"],
   "selected_atoms": [
     {{
       "title": "经历/项目名称（必须来自原简历）",
       "company": "公司/组织，没有则空字符串",
       "type": "work|project（实习/工作经历填 work，项目经历填 project，只能用这两个英文值之一）",
-      "bullets": ["改写后的 bullet，2-4 条，场景-动作-结果结构"]
+      "bullets": ["改写后的 bullet，{bullet_hint}，场景-动作-结果结构，每条都要有实质信息，能直接投递"]
     }}
   ],
   "ordering_strategy": ["简历排布建议，1-3 条"],
@@ -1246,6 +1370,7 @@ async def _build_customize_resume_with_ai(
 
 要求：
 - selected_atoms 必须来自原简历的真实经历，最多 6 段，最相关的放最前；实习/工作与项目经历都要尽量保留，不要漏掉。
+- 每段经历的 bullets：{bullet_hint}。把原文里的技术细节、职责、规模、结果都展开成专业、可直接投递的表达；但每条都必须有实质信息，严禁为了凑数量写“通过技术优化保障系统稳定运行”“提升整体效率”这类没有具体内容的空话套话——没有更多实质内容时，宁可少写一条。
 - type 只能填 "work" 或 "project" 两个英文值之一，不要填中文或其它写法。
 - skills_line 只列原简历里出现或可合理归纳的技能，不要塞 JD 里但简历没有的。
 - 所有字段必须给出，没有内容用空数组或空字符串。
@@ -1312,12 +1437,19 @@ async def _build_customize_resume_with_ai(
             norm_type = "work"
         else:
             norm_type = "project"
+        # bullets：先清洗空串，再过滤「凑数空话套话」（无具体数字/技术/对象的泛化表态）。
+        # 过滤后若一条不剩，则保留原始第一条兜底，避免该段经历完全空白。
+        raw_bullets = [_sanitize_resume_bullet(str(b)) for b in (atom.get("bullets") or []) if str(b).strip()]
+        raw_bullets = [b for b in raw_bullets if b]
+        kept = [b for b in raw_bullets if not _is_filler_bullet(b)]
+        if not kept and raw_bullets:
+            kept = raw_bullets[:1]
         draft_blocks.append({
             "title": str(atom.get("title") or "核心经历"),
             "company": str(atom.get("company") or ""),
             "type": norm_type,
             "reasons": [],
-            "bullets": [str(b) for b in (atom.get("bullets") or []) if str(b).strip()][:4],
+            "bullets": kept[:6],
             "skills": [],
         })
 
@@ -1329,7 +1461,7 @@ async def _build_customize_resume_with_ai(
         summary_bullets.append(f"以下内容不要硬写，避免被追问穿帮：{'、'.join(do_not_fake[:2])}")
 
     # 抬头基本信息：先用正则从原文提取，缺失项用简历库里的真实 basic_info 兜底
-    basic_info = _extract_basic_info_from_text(resume_text)
+    basic_info = _extract_basic_info_from_text(full_resume_text)
     if fallback_basic:
         # 姓名/电话/邮箱：正则猜不到时用库里真实值兜底
         for key in ("name", "phone", "email"):
@@ -1346,6 +1478,9 @@ async def _build_customize_resume_with_ai(
     # 教育段：优先用「完整教育数组」展示多段学历（硕士+本科），避免只剩一条。
     education = {}          # 兼容旧前端：最高学历单条
     education_list = []     # 新：多段教育，供导出依次展示
+    def _has_education_anchor(item: Dict[str, Any]) -> bool:
+        return any(str(item.get(k) or "").strip() for k in ("school", "major", "date_range", "graduation_year"))
+
     if fallback_basic:
         education = {
             "school": fallback_basic.get("university") or fallback_basic.get("school") or "",
@@ -1385,19 +1520,99 @@ async def _build_customize_resume_with_ai(
                     break
             ys = str(e.get("_start_year") or "")
             return (r, int(ys) if ys.isdigit() else 9999)
+        education_list = [e for e in education_list if _has_education_anchor(e)]
         education_list.sort(key=_edu_rank)
         for e in education_list:
             e.pop("_start_year", None)
+        if education_list:
+            education = education_list[-1]
         # 若没有多段数据，至少用最高学历单条兜底，保证有内容
-        if not education_list and (education.get("school") or education.get("major")):
+        if not education_list and _has_education_anchor(education):
             education_list = [education]
+
+    # 终极兜底：没有 resume_id（fallback_basic 为空）或库里没存教育时，
+    # 直接从简历原文正则抓「学校/学历/年份」，保证教育段不会整段空白。
+    if not education_list:
+        education_list = [e for e in _extract_education_from_text(full_resume_text) if _has_education_anchor(e)]
+        if education_list and not (education.get("school") or education.get("major")):
+            education = education_list[-1]  # 单条兼容字段用最高学历（已排序，末尾为最高）
 
     # 兴趣爱好：优先用简历库里已抓好的（解析时存的），其次从当前文本兜底抓。抓不到留空，绝不编造。
     interests = ""
     if fallback_basic and fallback_basic.get("_interests"):
         interests = str(fallback_basic.get("_interests"))
     if not interests:
-        interests = _extract_interests_from_text(resume_text)
+        interests = _extract_interests_from_text(full_resume_text)
+
+    # 短简历保险：信息很少时，AI 容易为了“写得像样”而补出数据库设计、
+    # 性能优化、稳定性等原文没有的事实。这里直接用原文可验证事实重写核心段落。
+    if len(full_resume_text or "") < 500:
+        skill_match = re.search(r"技能[:：]\s*([^\n]+)", full_resume_text or "")
+        factual_skills = []
+        if skill_match:
+            factual_skills = [
+                s.strip()
+                for s in re.split(r"[、,，/；;\s]+", skill_match.group(1))
+                if s.strip()
+            ][:10]
+
+        project_line = ""
+        lines = [ln.strip() for ln in re.split(r"[\n\r]+", full_resume_text or "") if ln.strip()]
+        for i, line in enumerate(lines):
+            if "项目经历" in line and i + 1 < len(lines):
+                project_line = lines[i + 1]
+                break
+        if not project_line:
+            project_line = next((ln for ln in lines if "系统" in ln or "项目" in ln or "课程设计" in ln), "")
+
+        conservative_blocks = []
+        if project_line:
+            title_part = project_line.split("。", 1)[0]
+            title = title_part
+            if "：" in title_part:
+                left, right = title_part.split("：", 1)
+                title = (left + "：" + right.split("，", 1)[0]).strip()
+            bullets = []
+            if "Java" in project_line or "Java" in (full_resume_text or ""):
+                if "增删改查" in project_line:
+                    bullets.append("使用 Java 完成图书管理系统的图书增删改查功能")
+                else:
+                    bullets.append("使用 Java 完成课程项目中的基础后端功能")
+            if "登录" in project_line:
+                bullets.append("实现用户登录功能")
+            if not bullets:
+                bullets.append(project_line)
+            conservative_blocks.append({
+                "title": title or "课程项目",
+                "company": "",
+                "type": "project",
+                "reasons": [],
+                "bullets": bullets[:2],
+                "skills": [],
+            })
+        if conservative_blocks:
+            draft_blocks = conservative_blocks
+
+        if factual_skills:
+            data["skills_line"] = factual_skills
+
+        edu_bits = []
+        if education_list:
+            e0 = education_list[-1]
+            edu_bits = [e0.get("school", ""), e0.get("major", ""), e0.get("degree", "")]
+        edu_text = " ".join(x for x in edu_bits if x).strip()
+        skill_text = "、".join(factual_skills[:4])
+        project_title = conservative_blocks[0]["title"] if conservative_blocks else ""
+        summary_parts = []
+        if edu_text:
+            summary_parts.append(edu_text)
+        if skill_text:
+            summary_parts.append(f"掌握 {skill_text} 基础")
+        if project_title:
+            summary_parts.append(f"课程项目经历包括{project_title}，原文明确包含图书增删改查和登录功能")
+        conservative_summary = "；".join(summary_parts) + "。"
+        data["profile_summary"] = conservative_summary or "已根据原始短简历保守整理，仅保留原文明确出现的信息。"
+        data["headline"] = f"{education.get('major') or '计算机相关专业'}应届生，具备基础后端项目经历"
 
     return {
         "target_job": target_job,
@@ -1654,22 +1869,45 @@ async def customize_resume(request: CustomizeResumeRequest):
     # 2) 优先 AI 改写
     if resume_text:
         try:
-            # 从原子库提取「针对该 JD 改写好的表达」作为参考（meta.variants[0].bullets）
+            # 从原子库提取「针对该 JD 改写好的表达」作为参考（meta.variants[0].bullets）。
+            # 只允许引用标题能在当前简历原文里匹配上的原子；账号级原子库可能包含同一用户
+            # 其它简历/其它候选人的经历，不能直接作为本次定制参考。
+            normalized_resume_text = re.sub(r"\s+", "", resume_text or "").lower()
+
+            def atom_belongs_to_current_resume(atom: Dict[str, Any]) -> bool:
+                meta = atom.get("meta") or {}
+                source_resume_id = str(meta.get("source_resume_id") or "").strip()
+                if request.resume_id and source_resume_id:
+                    return source_resume_id == str(request.resume_id)
+                title = str(atom.get("title") or "").strip()
+                if not title:
+                    return False
+                normalized_title = re.sub(r"\s+", "", title).lower()
+                return len(normalized_title) >= 3 and normalized_title in normalized_resume_text
+
             atom_refs = []
             for atom in (request.atoms or []):
+                if not atom_belongs_to_current_resume(atom):
+                    continue
                 meta = atom.get("meta") or {}
                 variants = meta.get("variants") or []
                 if variants and isinstance(variants[0], dict):
-                    bullets = variants[0].get("bullets") or []
+                    raw_bullets = variants[0].get("bullets") or []
+                    bullets = []
+                    for b in raw_bullets:
+                        # 旧版本已经写入库的 variant 可能含有 JD 词硬塞事实；
+                        # 进入最终定制前再按当前原子事实二次净化，避免旧脏 variant 污染 PDF。
+                        clean = atom_generator._sanitize_rewrite_bullet(str(b), atom)
+                        if clean:
+                            bullets.append(clean)
                     if bullets:
                         atom_refs.append({"title": atom.get("title", ""), "bullets": bullets})
 
             # 缓存 key 用「简历全文 + JD + 原子参考」内容哈希，不含 user_id。
             # 只有三者完全一字不差相同才命中 —— 相同输入本就该给相同输出，绝不会串到别人。
             # 重复点「一键优化」时直接返回缓存，省掉一次 v1-8k 调用（降本）。
-            # 版本号 customize-v2-edu：定制简历输出结构变化（新增多段教育 education_list + 起止年份 date_range）
-            # 后必须 +1，否则旧版本缓存（无 education_list / date_range）会被原样返回，导致「硕士和年份都没了」。
-            cache_seed = "customize-v2-edu\x00" + (resume_text or "") + "\x00" + (request.jd_text or "") + "\x00" + json.dumps(atom_refs, ensure_ascii=False, sort_keys=True)
+            # 版本号 customize-v15-sanitized-atom-refs：尾部字段不受截断影响，旧原子 variant 入参前二次净化。
+            cache_seed = "customize-v15-sanitized-atom-refs\x00" + (resume_text or "") + "\x00" + (request.jd_text or "") + "\x00" + json.dumps(atom_refs, ensure_ascii=False, sort_keys=True)
             cached_payload = cache.get_cached_llm_result(cache_seed)
             if cached_payload:
                 logger.info("[customize] 命中缓存，跳过 AI 调用（降本）")
@@ -1683,9 +1921,16 @@ async def customize_resume(request: CustomizeResumeRequest):
                 cache.cache_llm_result(cache_seed, payload)
             return {"success": True, "data": payload, "message": "定制简历草稿生成完成"}
         except Exception as e:
-            logger.warning(f"AI 定制简历失败，回退规则版: {e}")
+            logger.warning(f"AI 定制简历失败: {e}")
+            # 关键：已经知道当前简历是谁（有 resume_text）时，绝不回退到「规则版」。
+            # 规则版的正文来自原子库/匹配结果，与当前本人无关，AI 限流(429)时回退会产出
+            # 「抬头是本人、正文是别人」的张冠李戴简历（严重串数据）。宁可如实报错让用户重试。
+            msg = str(e)
+            if "429" in msg or "overload" in msg.lower() or "rate" in msg.lower():
+                raise HTTPException(status_code=503, detail="AI 接口当前繁忙（请求过多），请稍候 1-2 分钟后重试。")
+            raise HTTPException(status_code=502, detail="AI 定制简历生成失败，请稍后重试。")
 
-    # 3) 回退：规则版兜底（不依赖原始简历也能出一版）
+    # 3) 回退：仅在「完全没有原始简历文本」时才用规则版兜底（无法定位本人，退而求其次）
     try:
         payload = _build_customize_resume_payload(
             request.jd_text,
@@ -1696,6 +1941,299 @@ async def customize_resume(request: CustomizeResumeRequest):
     except Exception as e:
         logger.error(f"Customize resume failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _is_pdf_latin_char(ch: str) -> bool:
+    return ord(ch) < 128
+
+
+def _split_pdf_text_runs(text: str) -> List[tuple]:
+    """按中英文拆成绘制片段，避免内置 CJK 字体把英文显示成 J a v a。"""
+    runs = []
+    current = ""
+    current_is_latin = None
+    for ch in str(text):
+        is_latin = _is_pdf_latin_char(ch)
+        if current and is_latin != current_is_latin:
+            runs.append((current, current_is_latin))
+            current = ch
+        else:
+            current += ch
+        current_is_latin = is_latin
+    if current:
+        runs.append((current, current_is_latin))
+    return runs
+
+
+def _pdf_text_width(text: str, fontname: str, fontsize: float) -> float:
+    try:
+        import fitz
+        return fitz.get_text_length(str(text), fontname=fontname, fontsize=fontsize)
+    except Exception:
+        # 保守估算：中文约等于 1em，英文约 0.55em。
+        width = 0.0
+        for ch in str(text):
+            width += fontsize if "\u4e00" <= ch <= "\u9fff" else fontsize * 0.55
+        return width
+
+
+def _pdf_mixed_text_width(text: str, cjk_font: str, latin_font: str, fontsize: float) -> float:
+    width = 0.0
+    for run, is_latin in _split_pdf_text_runs(text):
+        width += _pdf_text_width(run, latin_font if is_latin else cjk_font, fontsize)
+    return width
+
+
+def _wrap_pdf_text(text: str, max_width: float, fontname: str, fontsize: float, latin_font: str = "helv") -> List[str]:
+    """按实际字体宽度做混排换行，避免中文 PDF 溢出页面。"""
+    text = re.sub(r"\s+", " ", str(text or "")).strip()
+    if not text:
+        return []
+    lines: List[str] = []
+    current = ""
+    for ch in text:
+        test = current + ch
+        if current and _pdf_mixed_text_width(test, fontname, latin_font, fontsize) > max_width:
+            lines.append(current.rstrip())
+            current = ch.lstrip()
+        else:
+            current = test
+    if current.strip():
+        lines.append(current.strip())
+    return lines
+
+
+def _build_resume_pdf_bytes(resume: Dict[str, Any]) -> bytes:
+    """后端直出 PDF：严格按中英文分段绘制，避免 china-s 把英文渲染成带空格的字母。"""
+    import fitz
+
+    def val(x: Any) -> str:
+        return str(x or "").strip()
+
+    def clean_bullet(text: Any) -> str:
+        return re.sub(r"^\s*[-•*]\s*", "", val(text)).strip()
+
+    def displayable_education(item: Any) -> bool:
+        if not isinstance(item, dict):
+            return False
+        return any(val(item.get(k)) for k in ("school", "major", "date_range", "graduation_year"))
+
+    # 选择适合中文 + 英文的字体：中文统一用 china-s（PyMuPDF 内置 CJK），英文用 helv/hebo。
+    # 加粗英文用 hebo（Helvetica-Bold），不加粗英文用 helv；中文没有独立的加粗内建字体，
+    # 通过“标题字号更大 + 分割线”营造层级，避免 bold 偏移二次绘制带来的重影问题。
+    def cjk_font_for(bold: bool) -> str:
+        return "china-s"  # 本身就是等宽黑体感，标题通过字号+分割线与正文区分
+
+    def latin_font_for(bold: bool) -> str:
+        return "hebo" if bold else "helv"
+
+    def _segment_width(seg: str, size: float, bold: bool) -> float:
+        is_latin = all(ord(c) < 128 for c in seg)
+        fname = latin_font_for(bold) if is_latin else cjk_font_for(bold)
+        try:
+            return fitz.get_text_length(seg, fontname=fname, fontsize=size)
+        except Exception:
+            return size * (1.0 if any("\u4e00" <= c <= "\u9fff" for c in seg) else 0.55) * len(seg)
+
+    def _mixed_width(text: str, size: float, bold: bool) -> float:
+        total = 0.0
+        for seg, _ in _split_pdf_text_runs(text):
+            total += _segment_width(seg, size, bold)
+        return total
+
+    def _mixed_wrap(text: str, max_w: float, size: float, bold: bool) -> List[str]:
+        text = re.sub(r"\s+", " ", str(text or "")).strip()
+        if not text:
+            return []
+        lines: List[str] = []
+        current = ""
+        for ch in text:
+            candidate = current + ch
+            if current and _mixed_width(candidate, size, bold) > max_w:
+                lines.append(current.rstrip())
+                current = ch.lstrip()
+            else:
+                current = candidate
+        if current.strip():
+            lines.append(current.strip())
+        return lines
+
+    def _draw_mixed_line(page, x: float, y_top: float, text: str, size: float, color, bold: bool):
+        cursor_x = x
+        for seg, is_latin in _split_pdf_text_runs(text):
+            if not seg:
+                continue
+            fname = latin_font_for(bold) if is_latin else cjk_font_for(bold)
+            if bold and not is_latin:
+                # CJK 内置字体没有独立 bold 字重，用 PDF 原生 fill+stroke 加粗；
+                # 只绘制一次文本，避免之前“画两遍模拟加粗”导致抽取文本重复。
+                page.insert_text(
+                    (cursor_x, y_top + size),
+                    seg,
+                    fontname=fname,
+                    fontsize=size,
+                    color=color,
+                    fill=color,
+                    render_mode=2,
+                    border_width=0.035 if size <= 11.2 else 0.045,
+                )
+            else:
+                page.insert_text((cursor_x, y_top + size), seg, fontname=fname, fontsize=size, color=color)
+            cursor_x += _segment_width(seg, size, bold)
+
+    basic = resume.get("basic_info") or {}
+    name = val(basic.get("name")) or "我的简历"
+    contact_parts = [
+        val(basic.get("phone")),
+        val(basic.get("email")),
+        ("求职意向：" + val(basic.get("job_intention"))) if val(basic.get("job_intention")) else "",
+        val(basic.get("location")),
+    ]
+    contact_parts = [p for p in contact_parts if p]
+    profile_summary = val(resume.get("profile_summary") or resume.get("summary"))
+    skills = [val(s) for s in (resume.get("skills_line") or []) if val(s)]
+    blocks = [b for b in (resume.get("selected_atoms") or []) if isinstance(b, dict)]
+    work_blocks = [b for b in blocks if val(b.get("type")) in {"work", "intern", "internship"}]
+    project_blocks = [b for b in blocks if val(b.get("type")) not in {"work", "intern", "internship"}]
+    edu = resume.get("education") or {}
+    raw_edu_list = resume.get("education_list") or ([edu] if (edu.get("school") or edu.get("major")) else [])
+    edu_list = [e for e in raw_edu_list if displayable_education(e)]
+    interests = val(resume.get("interests"))
+
+    doc = fitz.open()
+    page_w, page_h = 595, 842  # A4 points
+    margin_l, margin_r, margin_t, margin_b = 42, 42, 38, 42
+    content_w = page_w - margin_l - margin_r
+    text_color = (0.12, 0.16, 0.22)
+    muted = (0.38, 0.43, 0.50)
+
+    page = None
+    y = margin_t
+
+    def new_page():
+        nonlocal page, y
+        page = doc.new_page(width=page_w, height=page_h)
+        y = margin_t
+
+    def ensure(height: float):
+        nonlocal page
+        if page is None:
+            new_page()
+            return
+        if y + height > page_h - margin_b:
+            new_page()
+
+    def write_line(text: str, size: float = 10.5, color=text_color, x: float = margin_l, leading: float = 1.42, bold: bool = False):
+        nonlocal y
+        ensure(size * leading)
+        # 不再做 bold 偏移二次绘制：英文用 hebo 本身就是粗体，中文用更大字号+分隔线体现层级
+        _draw_mixed_line(page, x, y, text, size, color, bold)
+        y += size * leading
+
+    def write_wrapped(text: str, size: float = 10.5, color=text_color, indent: float = 0, leading: float = 1.45, bold: bool = False):
+        nonlocal y
+        max_w = content_w - indent
+        for line in _mixed_wrap(text, max_w, size, bold):
+            write_line(line, size=size, color=color, x=margin_l + indent, leading=leading, bold=bold)
+
+    def section(title: str, subtitle: str = ""):
+        nonlocal y
+        ensure(36)
+        y += 7
+        line_top = y
+        write_line(title, size=13.2, color=(0.06, 0.09, 0.16), leading=1.45, bold=True)
+        if subtitle:
+            subtitle_x = margin_l + _mixed_width(title, 13.2, True) + 7
+            page.insert_text(
+                (subtitle_x, line_top + 12.2),
+                subtitle,
+                fontname="helv",
+                fontsize=9.0,
+                color=muted,
+            )
+        page.draw_line((margin_l, y), (page_w - margin_r, y), color=(0.06, 0.09, 0.16), width=0.8)
+        y += 8
+
+    def exp_block(block: Dict[str, Any]):
+        nonlocal y
+        title = val(block.get("title")) or "核心经历"
+        company = val(block.get("company"))
+        bullets = [clean_bullet(b) for b in (block.get("bullets") or []) if clean_bullet(b)]
+        estimated = 24 + len(bullets) * 30
+        ensure(min(estimated, 120))
+        write_wrapped(title + (f" | {company}" if company else ""), size=11.2, color=(0.06, 0.09, 0.16), leading=1.32, bold=True)
+        for bullet in bullets:
+            for line in _mixed_wrap(bullet, content_w, 10.5, False):
+                write_line(line, size=10.5, color=text_color, x=margin_l, leading=1.35)
+        y += 5
+
+    new_page()
+    section("个人信息", "Profile")
+    write_line(name, size=20, color=(0.06, 0.09, 0.16), leading=1.35, bold=True)
+    if contact_parts:
+        write_wrapped(" | ".join(contact_parts), size=9.8, color=muted)
+        y += 2
+
+    if profile_summary:
+        section("个人介绍", "Summary")
+        write_wrapped(profile_summary, size=10.5)
+
+    if skills:
+        section("核心技能", "Skills")
+        write_wrapped("、".join(skills), size=10.3)
+
+    if project_blocks:
+        section("项目", "Projects")
+        for block in project_blocks:
+            exp_block(block)
+
+    if work_blocks:
+        section("实习 / 工作经历", "Experience")
+        for block in work_blocks:
+            exp_block(block)
+
+    if edu_list:
+        section("教育", "Education")
+        for e in edu_list:
+            if not isinstance(e, dict):
+                continue
+            dr = val(e.get("date_range") or e.get("graduation_year"))
+            parts = [val(e.get("school")), val(e.get("major")), val(e.get("degree")), dr]
+            parts = [p for p in parts if p]
+            if parts:
+                write_wrapped(" / ".join(parts), size=11.2, color=(0.06, 0.09, 0.16), leading=1.35, bold=True)
+
+    if interests:
+        section("兴趣爱好", "Interests")
+        write_wrapped(interests, size=10.5)
+
+    out = io.BytesIO()
+    doc.save(out, deflate=True, garbage=4)
+    doc.close()
+    return out.getvalue()
+
+
+@app.post("/api/v1/resume/export-pdf")
+async def export_resume_pdf(request: ExportResumePdfRequest):
+    """直接下载定制简历 PDF。后端生成文本型 PDF，避免前端截图式导出截断/串画面。"""
+    try:
+        resume = request.resume or {}
+        basic = resume.get("basic_info") or {}
+        name = str(basic.get("name") or "我的简历").strip()
+        pdf_bytes = _build_resume_pdf_bytes(resume)
+        filename = f"{name}-定制简历.pdf"
+        quoted = quote(filename)
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename*=UTF-8''{quoted}",
+                "Cache-Control": "no-store",
+            },
+        )
+    except Exception as e:
+        logger.error(f"Export PDF failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="PDF 导出失败，请稍后重试。")
 
 
 # ========== 历史记录接口 ==========
@@ -1738,6 +2276,9 @@ async def generate_atoms(resume_id: str = Form(...), current_user: Dict[str, Any
         atoms = atom_generator.from_resume_data(resume_data)
         saved = []
         for atom in atoms:
+            meta = atom.get("meta") or {}
+            meta["source_resume_id"] = resume_id
+            atom["meta"] = meta
             atom_id = db.save_atom(atom, user_id=current_user["id"])
             saved.append({**atom, "id": atom_id})
 

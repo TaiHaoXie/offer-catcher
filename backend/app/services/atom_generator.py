@@ -60,6 +60,9 @@ class AtomGenerator:
                 skills=project.get("tech_stack", [])
             ))
 
+        if not atoms and resume_data.get("raw_text"):
+            atoms.extend(self._build_atoms_from_raw_text(str(resume_data.get("raw_text") or "")))
+
         # 教育、技能不做成原子（纯事实/标签，没有可改写的表达层）
 
         # 用 LLM 批量为经历补亮点与技能（一次调用，省 token）
@@ -67,6 +70,62 @@ class AtomGenerator:
             self._enrich_atoms_with_llm(atoms)
         except Exception as e:
             logger.warning(f"LLM 经历增强失败，使用规则版降级: {e}")
+
+        return atoms
+
+    def _build_atoms_from_raw_text(self, text: str) -> List[Dict]:
+        """结构化解析为空时，从原文标题兜底拆经历原子。
+
+        只识别原文中明确的「项目经历...：」「实习经历...：」段落，不推测、不新增。
+        """
+        atoms: List[Dict] = []
+        if not text.strip():
+            return atoms
+
+        heading_re = re.compile(r"(?m)^(项目经历[^：:\n]*|实习经历[^：:\n]*|工作经历[^：:\n]*)[：:]\s*(.+?)\s*$")
+        matches = list(heading_re.finditer(text))
+        for idx, match in enumerate(matches):
+            heading = match.group(1).strip()
+            title_line = match.group(2).strip()
+            start = match.end()
+            end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+            body = text[start:end].strip()
+            if not title_line or not body:
+                continue
+
+            atom_type = "project" if heading.startswith("项目") else "intern"
+            company = ""
+            role = ""
+            title = title_line
+            if atom_type == "intern":
+                company_match = re.match(r"^(.+?(?:有限公司|公司|集团|学校|大学|学院))\s+(.+)$", title_line)
+                if company_match:
+                    company = company_match.group(1).strip()
+                    role = company_match.group(2).strip()
+                    title = role
+                else:
+                    parts = title_line.split()
+                    if len(parts) >= 2:
+                        company = " ".join(parts[:-1])
+                        role = parts[-1]
+                        title = role
+                    else:
+                        role = title_line
+            else:
+                role_match = re.search(r"项目角色[：:]\s*([^\n]+)", body)
+                role = role_match.group(1).strip() if role_match else ""
+
+            duration_match = re.search(r"(?:项目时间|实习时间|工作时间)[：:]\s*([^\n]+)", body)
+            duration = duration_match.group(1).strip() if duration_match else ""
+
+            atoms.append(self._build_atom(
+                atom_type=atom_type,
+                title=title,
+                company=company,
+                role=role,
+                duration=duration,
+                description=body,
+            ))
 
         return atoms
 
@@ -139,6 +198,48 @@ class AtomGenerator:
 
     # ========== 2. 针对 JD 改写表达层 ==========
 
+    def _sanitize_rewrite_bullet(self, bullet: str, atom: Dict) -> str:
+        """过滤原子改写中的事实漂移，保留表达优化，删除/降级编造成分。"""
+        text = str(bullet or "").strip()
+        if not text:
+            return ""
+        source = " ".join([
+            str(atom.get("title") or ""),
+            str(atom.get("company") or ""),
+            str((atom.get("meta") or {}).get("base_description") or atom.get("description") or ""),
+        ])
+        compact_source = re.sub(r"\s+", "", source)
+
+        # 不把 JD 里的 AI/算法/上线等词硬塞进非 AI 原经历。
+        if "AI产品" not in source and "AI 产品" not in source:
+            text = text.replace("AI产品", "产品").replace("AI 产品", "产品")
+        if "AI助手" not in source and "AI 助手" not in source and "智能助手" not in source:
+            text = text.replace("AI助手", "智能助手").replace("AI 助手", "智能助手")
+        if "AI课程" not in source and "AI 课程" not in source:
+            text = text.replace("AI课程", "课程").replace("AI 课程", "课程")
+        for term in ("大模型", "RAG", "Agent", "智能体"):
+            if term.lower() not in source.lower():
+                text = text.replace(term, "")
+        if "用户行为数据" not in source:
+            text = text.replace("用户行为数据", "用户反馈")
+        if "算法" not in source:
+            text = text.replace("与算法团队", "与团队").replace("算法、", "").replace("算法团队", "团队")
+            text = re.sub(r"[，,；;]\s*[^，,；;。]{0,12}算法[^，,；;。]*", "", text)
+            text = text.replace("算法", "逻辑")
+        if "团队" not in source and "协作" not in source and "合作" not in source:
+            text = re.sub(r"与[^，,；;。]{0,12}团队(?:紧密)?(?:合作|协作)[，,]?", "", text)
+        if "上线" not in source and "落地" not in source and "实施" not in source:
+            text = re.sub(r"从概念到上线的全流程管理|从需求定义到上线落地|上线后的?", "方案推进", text)
+            text = text.replace("设计并实施", "参与设计").replace("提出并实施", "提出")
+        if "开发" not in source and "实现" not in source and "功能" not in source:
+            text = text.replace("功能开发", "方案设计").replace("开发", "设计")
+        if "主导" not in source and "负责" not in source and "负责人" not in source:
+            text = text.replace("主导", "参与")
+
+        text = re.sub(r"基于\s*的", "", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip(" ，,；;。.")
+
     def rewrite_for_jd(self, atom: Dict, jd_text: str) -> Dict:
         """
         针对目标 JD 重写这段经历的「表达层」，返回一个 variant。
@@ -152,11 +253,14 @@ class AtomGenerator:
             "让它更贴合岗位要求、更容易通过初筛。\n\n"
             "【硬性守则】\n"
             "1. 事实层锁定：公司、岗位、时间、做过的项目都不可更改、不可编造。\n"
-            "2. 只允许：调整措辞、突出与JD相关的侧面、把已有成果更清晰/可量化地呈现、补充与描述一致的合理细节。\n"
-            "3. 禁止：编造没发生的项目/职责/数字、夸大到与原描述矛盾。\n"
-            "4. 输出 2-4 条 bullet，写成真实简历里的项目 bullet 风格：\n"
+            "2. 只允许：调整措辞、突出与JD相关的侧面、把原文已经写明的动作说清楚。\n"
+            "3. 禁止：把 JD 里的 AI/算法/上线/自动化/指标等词硬塞成候选人做过的事实；原文没写就不能写。\n"
+            "4. 禁止新增数字或百分比；只有原始描述中已经出现的数字才能照抄使用。\n"
+            "5. 禁止把“参与/协助”改成“主导/负责”，除非原文明确写了负责/主导/负责人。\n"
+            "6. 禁止写“提升xx效率/准确率/满意度/响应速度”等原文没有证据支撑的结果。\n"
+            "7. 输出 2-4 条 bullet，写成真实简历里的项目 bullet 风格：\n"
             "   - 以动词开头（负责/主导/搭建/优化/推动/落地…）。\n"
-            "   - 句式用「做了什么 + 怎么做 + 量化结果」，结果优先用数字。\n"
+            "   - 句式用「做了什么 + 怎么做」，有原文数字才写结果数字。\n"
             "   - 禁止用「展现了/体现了/具备…的能力」这类空话总结性结尾，简历里没人这样写。\n"
             "   - 每条尽量控制在 40 字以内，干练、可被追问。\n\n"
             f"事实层（锁定）：{json.dumps(fact, ensure_ascii=False)}\n"
@@ -165,7 +269,13 @@ class AtomGenerator:
             "只输出 JSON：{\"bullets\":[\"...\"],\"emphasis\":\"这次改写主要强调了什么(<=20字)\"}"
         )
         result = self.llm_client.call_json([{"role": "user", "content": prompt}], model="kimi")
-        bullets = [str(b).strip() for b in (result.get("bullets") or []) if str(b).strip()][:4]
+        bullets = []
+        for b in (result.get("bullets") or []):
+            clean = self._sanitize_rewrite_bullet(str(b), atom)
+            if clean:
+                bullets.append(clean)
+            if len(bullets) >= 4:
+                break
         emphasis = str(result.get("emphasis", "")).strip()
         return {
             "bullets": bullets,

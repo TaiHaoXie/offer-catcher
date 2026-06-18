@@ -9,8 +9,7 @@
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- html2pdf：定制简历「点击直接下载 PDF」。多页用像素分页；失败自动回退到打印预览 -->
-    <script src="https://cdn.jsdelivr.net/npm/html2pdf.js@0.10.1/dist/html2pdf.bundle.min.js"></script>
+    <!-- PDF 导出使用浏览器原生打印页，避免截图式 PDF 截断或混入其它页面 -->
     <script>
         tailwind.config = {
             theme: {
@@ -924,7 +923,7 @@
         }
         .resume-paper-section { margin-top: 16px; }
         .resume-paper-h2 {
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 700;
             color: #111827;
             border-bottom: 1px solid #e5e7eb;
@@ -932,13 +931,13 @@
             margin-bottom: 8px;
         }
         .resume-paper-summary {
-            font-size: 12px;
-            line-height: 1.8;
+            font-size: 10.5px;
+            line-height: 1.72;
             color: #374151;
         }
         .resume-paper-skills { display: flex; flex-wrap: wrap; gap: 6px; }
         .resume-paper-skill {
-            font-size: 11px;
+            font-size: 10.5px;
             color: #374151;
             border: 1px solid #d1d5db;
             border-radius: 6px;
@@ -951,15 +950,14 @@
             justify-content: space-between;
             gap: 12px;
         }
-        .resume-paper-exp-title { font-size: 13px; font-weight: 700; color: #1f2937; }
+        .resume-paper-exp-title { font-size: 12px; font-weight: 800; color: #111827; }
         .resume-paper-exp-meta { font-size: 11px; color: #6b7280; flex-shrink: 0; }
-        .resume-paper-bullets {
-            margin: 6px 0 0 18px;
-            list-style: disc;
+        .resume-paper-lines {
+            margin: 6px 0 0 0;
         }
-        .resume-paper-bullets li {
-            font-size: 12px;
-            line-height: 1.75;
+        .resume-paper-line {
+            font-size: 10.5px;
+            line-height: 1.72;
             color: #374151;
             margin-bottom: 3px;
         }
@@ -2597,6 +2595,7 @@
                 state.currentUser = data.user;
                 closeAuthModal();
                 renderAuthState();
+                loadAtoms();
                 showJobMessage('登录成功', 'success');
                 if (data.user && !data.user.seen_onboarding) {
                     maybeShowOnboarding();
@@ -2626,6 +2625,7 @@
                 if (res.ok && data.user) {
                     state.currentUser = data.user;
                     renderAuthState();
+                    loadAtoms();
                     if (!data.user.seen_onboarding) maybeShowOnboarding();
                 }
             } catch (e) {
@@ -2923,9 +2923,8 @@
             if (state.lastGeneratedResume) {
                 const resume = state.lastGeneratedResume;
                 const blocks = resume.selected_atoms || [];
-                const bullets = (resume.summary_bullets || []).slice(0, 4);
                 elements.workspaceResumeTitle.textContent = '当前岗位定制简历';
-                elements.workspaceResumeCopy.textContent = '这里承接本轮岗位定制结果，会优先展示改写后的重点经历和定制策略。';
+                elements.workspaceResumeCopy.textContent = '这里承接本轮岗位定制结果，预览改写后的简历正文。';
                 elements.workspaceResumeContent.innerHTML = `
                     <div>
                         <div class="three-col-kicker">Customized Resume</div>
@@ -2945,7 +2944,7 @@
                     ` : ''}
                     ${blocks.length ? `
                         <div class="workspace-resume-block">
-                            <div class="workspace-resume-block-title">重点经历排布</div>
+                            <div class="workspace-resume-block-title">核心经历</div>
                             <div class="workspace-resume-bullets">
                                 ${blocks.slice(0, 3).map(block => `
                                     <div class="workspace-resume-highlight">
@@ -2953,14 +2952,6 @@
                                         <div class="workspace-side-copy">${escapeHtml((block.bullets || []).slice(0, 2).join('；') || block.company || '已接入当前岗位定制简历')}</div>
                                     </div>
                                 `).join('')}
-                            </div>
-                        </div>
-                    ` : ''}
-                    ${bullets.length ? `
-                        <div class="workspace-resume-block">
-                            <div class="workspace-resume-block-title">本轮定制策略</div>
-                            <div class="workspace-resume-bullets">
-                                ${bullets.map(item => `<div class="workspace-resume-bullet">• ${escapeHtml(item)}</div>`).join('')}
                             </div>
                         </div>
                     ` : ''}
@@ -3109,11 +3100,10 @@
         // 自动保存到 localStorage
         function saveState() {
             try {
-                // 公网多人可能共用一台电脑/浏览器：不持久化简历正文等隐私数据（resumeData/resumeId），
-                // 避免下一个人打开页面看到/误用上一个人的简历。只缓存非敏感的 JD 草稿和当前 tab。
+                // 公网多人可能共用一台电脑/浏览器：不持久化简历正文和 JD 正文，
+                // 避免下一个人打开页面看到/误用上一个人的测试材料。只缓存当前 tab。
                 const saveData = {
-                    currentTab: state.currentTab,
-                    jdText: elements.jdInput ? elements.jdInput.value.trim() : ''
+                    currentTab: state.currentTab
                 };
                 localStorage.setItem('offerCatcherState', JSON.stringify(saveData));
             } catch (e) {
@@ -3127,13 +3117,14 @@
                 const saved = localStorage.getItem('offerCatcherState');
                 if (saved) {
                     const saveData = JSON.parse(saved);
+                    if (Object.prototype.hasOwnProperty.call(saveData, 'jdText')) {
+                        delete saveData.jdText;
+                        localStorage.setItem('offerCatcherState', JSON.stringify(saveData));
+                    }
                     // 简历正文不再从本地恢复（隐私 + 防串数据）：每次进来都让用户重新上传/粘贴当前简历。
                     if (saveData.currentTab) {
                         state.currentTab = saveData.currentTab;
                         // switchTab 会在后面调用，这里先跳过
-                    }
-                    if (saveData.jdText && elements.jdInput) {
-                        elements.jdInput.value = saveData.jdText;
                     }
                     // 延迟调用 updateButtons，确保所有初始化完成
                     setTimeout(() => {
@@ -3243,11 +3234,22 @@
             // 关键：清掉上一份简历的已解析数据 / id，避免定制简历误用旧简历（数据串用）
             state.resumeData = null;
             state.resumeId = null;
+            state.lastMatchResult = null;
             state.lastGeneratedResume = null;
             state.useFixedResume = false;
             // 关键：清空「粘贴文本」框里上一份简历的残留内容。
             // 否则上传新文件后点定制，会优先读到粘贴框里的旧文本，导致名字/经历串成上一个人。
             if (elements.resumeTextInput) elements.resumeTextInput.value = '';
+            elements.resultContent.innerHTML = '';
+            elements.resultContent.classList.add('hidden');
+            elements.resultLoading.classList.add('hidden');
+            elements.resultWaiting.classList.remove('hidden');
+            setResumeEditState('waiting', `
+                <div class="resume-lab-empty">
+                    <h4 class="text-[13px] font-semibold text-gemini-dark/82">等待生成定制简历</h4>
+                    <p class="text-[11px] leading-7 max-w-[260px]">完成当前简历与 JD 的匹配分析后，这里会生成可导出的定制版本。</p>
+                </div>
+            `);
 
             // 显示上传成功状态（无需显示"上传中"，文件已在本地）
             showResumeFileSuccess(file);
@@ -3385,6 +3387,7 @@
             state.recoveredResumeText = '';
             state.resumeData = null;
             state.resumeId = null;
+            state.lastMatchResult = null;
             state.lastGeneratedResume = null;
             state.useFixedResume = false;
             if (elements.resumeFileInput) elements.resumeFileInput.value = '';
@@ -3437,6 +3440,18 @@
                 state.resumeFile = null;
                 state.resumeFileName = '';
                 state.recoveredResumeText = '';
+                state.lastMatchResult = null;
+                state.lastGeneratedResume = null;
+                elements.resultContent.innerHTML = '';
+                elements.resultContent.classList.add('hidden');
+                elements.resultLoading.classList.add('hidden');
+                elements.resultWaiting.classList.remove('hidden');
+                setResumeEditState('waiting', `
+                    <div class="resume-lab-empty">
+                        <h4 class="text-[13px] font-semibold text-gemini-dark/82">等待生成定制简历</h4>
+                        <p class="text-[11px] leading-7 max-w-[260px]">完成当前简历与 JD 的匹配分析后，这里会生成可导出的定制版本。</p>
+                    </div>
+                `);
                 saveState(); // 自动保存
                 showResumeSuccess(data.data);
                 renderWorkspaceResumePanel();
@@ -4565,6 +4580,16 @@
             }
 
             try {
+                const resumeNormForAtoms = (resumeTextForCustomize || '').replace(/\s+/g, '').toLowerCase();
+                const atomRefsForCurrentResume = (state.atoms || []).filter(a => {
+                    if (!a || !a.meta || !(a.meta.variants || []).length) return false;
+                    if (state.resumeId && a.meta.source_resume_id) {
+                        return String(a.meta.source_resume_id) === String(state.resumeId);
+                    }
+                    const title = String(a.title || '').trim().replace(/\s+/g, '').toLowerCase();
+                    return title.length >= 3 && resumeNormForAtoms.includes(title);
+                });
+
                 const response = await fetch(`${API_URL}/api/v1/resume/customize`, {
                     method: 'POST',
                     headers: {
@@ -4575,8 +4600,8 @@
                         resume_text: resumeTextForCustomize || null,
                         jd_text: jdText,
                         match_result: state.lastMatchResult,
-                        // 带上原子库里「针对该 JD 改写好的表达」，让导出用上改写成果
-                        atoms: (state.atoms || []).filter(a => a && a.meta && (a.meta.variants || []).length)
+                        // 只带当前简历中能匹配到标题的原子参考，避免账号级原子串入别的简历。
+                        atoms: atomRefsForCurrentResume
                     })
                 });
                 const data = await response.json();
@@ -4587,10 +4612,12 @@
                 playSound(523, 0.15, 0.1, 'success');
             } catch (err) {
                 console.error(err);
+                const tip = (err && err.message) ? String(err.message) : '生成失败，请稍后重试';
+                const busy = /繁忙|429|稍候|稍后|重试/.test(tip);
                 setResumeEditState('waiting', `
                     <div class="resume-lab-empty">
-                        <p class="text-[12px] text-red-400">生成失败，请检查后端服务</p>
-                        <p class="text-[11px] text-gemini-dark/42">修复后重新点击“一键优化”即可。</p>
+                        <p class="text-[12px] text-red-400">${escapeHtml(busy ? tip : '生成失败，请稍后重试')}</p>
+                        <p class="text-[11px] text-gemini-dark/42">${busy ? '稍等片刻后重新点击“一键优化”即可。' : '请确认后端服务正常后重新点击“一键优化”。'}</p>
                     </div>
                 `);
             }
@@ -5524,6 +5551,8 @@
             const profileSummary = resume.profile_summary || '';
             const skillsLine = resume.skills_line || [];
             const orderingStrategy = resume.ordering_strategy || [];
+            const cleanResumeLine = (s) => String(s == null ? '' : s).replace(/^\s*[-•*]\s*/, '').trim();
+            const displayableEducation = (edu) => !!(edu && (edu.school || edu.major || edu.date_range || edu.graduation_year));
             // 抬头优先用定制结果返回的 basic_info（来自当前简历），兜底用已解析简历
             const basic = (resume.basic_info) || (state.resumeData && state.resumeData.basic_info) || {};
             const candidateName = basic.name || (state.resumeData && state.resumeData.basic_info && state.resumeData.basic_info.name) || '我的简历';
@@ -5587,9 +5616,9 @@
                                         ${block.company ? `<span class="resume-paper-exp-meta">${escapeHtml(block.company)}</span>` : ''}
                                     </div>
                                     ${(block.bullets || []).length ? `
-                                        <ul class="resume-paper-bullets">
-                                            ${block.bullets.map(b => `<li>${escapeHtml(b)}</li>`).join('')}
-                                        </ul>
+                                        <div class="resume-paper-lines">
+                                            ${block.bullets.map(cleanResumeLine).filter(Boolean).map(b => `<div class="resume-paper-line">${escapeHtml(b)}</div>`).join('')}
+                                        </div>
                                     ` : ''}
                                 </div>
                             `;
@@ -5614,8 +5643,9 @@
                             const list = (resume.education_list && resume.education_list.length)
                                 ? resume.education_list
                                 : (resume.education && (resume.education.school || resume.education.major) ? [resume.education] : []);
-                            if (!list.length) return '';
-                            const rows = list.map(edu => {
+                            const filteredList = list.filter(displayableEducation);
+                            if (!filteredList.length) return '';
+                            const rows = filteredList.map(edu => {
                                 const dr = edu.date_range || edu.graduation_year || '';
                                 const parts = [edu.school, edu.major, edu.degree, dr].filter(Boolean);
                                 return parts.length ? `<div class="resume-paper-exp"><div class="resume-paper-exp-head"><span class="resume-paper-exp-title">${parts.map(escapeHtml).join('　·　')}</span></div></div>` : '';
@@ -5635,38 +5665,6 @@
                             </section>
                         ` : ''}
                     </div>
-
-                    ${(matched.length || missing.length || notes.length) ? `
-                        <details class="resume-aux">
-                            <summary class="resume-aux-summary">定制说明（JD 对齐 / 提醒）</summary>
-                            <div class="resume-aux-body space-y-3">
-                                ${matched.length ? `
-                                    <div>
-                                        <div class="text-[10px] font-semibold text-green-700 mb-1.5">已覆盖 JD 要求</div>
-                                        <div class="flex flex-wrap gap-1.5">
-                                            ${matched.map(item => `<span class="px-2 py-1 bg-green-100 text-green-700 rounded-lg text-[10px]">${escapeHtml(item)}</span>`).join('')}
-                                        </div>
-                                    </div>
-                                ` : ''}
-                                ${missing.length ? `
-                                    <div>
-                                        <div class="text-[10px] font-semibold text-rose-700 mb-1.5">仍需补位（不建议硬写）</div>
-                                        <div class="flex flex-wrap gap-1.5">
-                                            ${missing.map(item => `<span class="px-2 py-1 bg-rose-100 text-rose-700 rounded-lg text-[10px]">${escapeHtml(item)}</span>`).join('')}
-                                        </div>
-                                    </div>
-                                ` : ''}
-                                ${notes.length ? `
-                                    <div>
-                                        <div class="text-[10px] font-semibold text-amber-800 mb-1.5">提醒</div>
-                                        <div class="space-y-1">
-                                            ${notes.map(note => `<p class="text-[10px] text-amber-800 leading-relaxed">• ${escapeHtml(note)}</p>`).join('')}
-                                        </div>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        </details>
-                    ` : ''}
                 </div>
             `);
 
@@ -5684,9 +5682,11 @@
             document.getElementById('btn-export-resume-pdf')?.addEventListener('click', () => exportResumeAsPDF(resume));
         }
 
-        // 导出定制简历为 PDF（浏览器打印能力，无需后端依赖）
-        function exportResumeAsPDF(resume) {
+        // 导出定制简历为 PDF（原生打印页，无截图式裁切）
+        async function exportResumeAsPDF(resume) {
             const esc = (s) => escapeHtml(String(s == null ? '' : s));
+            const cleanResumeLine = (s) => String(s == null ? '' : s).replace(/^\s*[-•*]\s*/, '').trim();
+            const displayableEducation = (edu) => !!(edu && (edu.school || edu.major || edu.date_range || edu.graduation_year));
             // 抬头优先用本次定制结果返回的 basic_info（来自当前简历），
             // 兜底才用 state.resumeData，避免误用上一份简历的姓名/联系方式。
             const basic = (resume && resume.basic_info) || (state.resumeData && state.resumeData.basic_info) || {};
@@ -5719,7 +5719,7 @@
                         <span class="exp-title">${esc(block.title || '核心经历')}</span>
                         <span class="exp-meta">${esc(block.company || '')}</span>
                     </div>
-                    ${(block.bullets || []).length ? `<ul>${block.bullets.map(b => `<li>${esc(b)}</li>`).join('')}</ul>` : ''}
+                    ${(block.bullets || []).length ? `<div class="plain-lines">${block.bullets.map(cleanResumeLine).filter(Boolean).map(b => `<div class="plain-line">${esc(b)}</div>`).join('')}</div>` : ''}
                 </div>
             `;
             // 按 type 把经历分成「项目经历」与「实习 / 工作经历」两类
@@ -5730,7 +5730,7 @@
             const eduList = (resume.education_list && resume.education_list.length)
                 ? resume.education_list
                 : ((edu.school || edu.major) ? [edu] : []);
-            const eduRows = eduList.map(e => {
+            const eduRows = eduList.filter(displayableEducation).map(e => {
                 const dr = e.date_range || e.graduation_year || '';
                 const p = [e.school, e.major, e.degree, dr].filter(Boolean).map(esc);
                 return p.length ? `<div class="exp"><div class="exp-head"><span class="exp-title">${p.join('　·　')}</span></div></div>` : '';
@@ -5752,80 +5752,121 @@
                 <html lang="zh-CN"><head><meta charset="utf-8"><title>${name} - 定制简历</title>
                 <style>
                     * { margin: 0; padding: 0; box-sizing: border-box; }
-                    body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; color: #1f2937; padding: 32px 40px; line-height: 1.7; font-size: 13px; }
-                    h1 { font-size: 22px; margin-bottom: 4px; }
-                    .contact { color: #6b7280; font-size: 12px; margin-bottom: 16px; }
-                    h2 { font-size: 14px; color: #111827; border-bottom: 2px solid #111827; padding-bottom: 4px; margin: 18px 0 10px; }
-                    .summary { color: #374151; }
+                    html, body { background: #fff; }
+                    body {
+                        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
+                        color: #1f2937;
+                        line-height: 1.62;
+                        font-size: 12px;
+                        -webkit-print-color-adjust: exact;
+                        print-color-adjust: exact;
+                    }
+                    .resume-doc { width: 100%; max-width: 760px; margin: 0 auto; padding: 0; background: #fff; }
+                    h1 { font-size: 21px; margin-bottom: 3px; }
+                    .contact { color: #6b7280; font-size: 11px; margin-bottom: 12px; }
+                    .headline { color: #4b5563; font-size: 11px; font-weight: 700; margin: -4px 0 10px; }
+                    h2 {
+                        font-size: 14px;
+                        color: #111827;
+                        border-bottom: 1.5px solid #111827;
+                        padding-bottom: 3px;
+                        margin: 14px 0 8px;
+                        break-after: avoid;
+                        page-break-after: avoid;
+                    }
+                    .summary { color: #374151; font-size: 10.5px; line-height: 1.72; }
                     .skills { display: flex; flex-wrap: wrap; gap: 6px; }
-                    .skills span { border: 1px solid #d1d5db; border-radius: 6px; padding: 2px 8px; font-size: 12px; }
-                    .exp { margin-bottom: 12px; }
+                    .skills span { border: 1px solid #d1d5db; border-radius: 6px; padding: 1px 7px; font-size: 10.5px; }
+                    .exp {
+                        margin-bottom: 9px;
+                        break-inside: avoid;
+                        page-break-inside: avoid;
+                    }
                     .exp-head { display: flex; justify-content: space-between; align-items: baseline; }
-                    .exp-title { font-weight: 700; }
-                    .exp-meta { color: #6b7280; font-size: 12px; }
-                    ul { margin: 4px 0 0 18px; }
-                    li { margin-bottom: 3px; }
-                    @media print { body { padding: 16px 24px; } @page { margin: 12mm; } }
+                    .exp-title { font-weight: 800; font-size: 12px; color: #111827; }
+                    .exp-meta { color: #6b7280; font-size: 11px; }
+                    .plain-lines { margin-top: 3px; }
+                    .plain-line { margin-bottom: 2px; font-size: 10.5px; line-height: 1.72; }
+                    .no-print {
+                        position: sticky;
+                        top: 0;
+                        z-index: 10;
+                        display: flex;
+                        justify-content: center;
+                        gap: 10px;
+                        padding: 12px;
+                        background: rgba(255,255,255,.96);
+                        border-bottom: 1px solid #e5e7eb;
+                        font-size: 12px;
+                    }
+                    .no-print button {
+                        border: 0;
+                        border-radius: 999px;
+                        padding: 7px 14px;
+                        cursor: pointer;
+                        background: #111827;
+                        color: white;
+                        font-weight: 700;
+                    }
+                    .no-print span { color: #6b7280; align-self: center; }
+                    @page { size: A4; margin: 12mm 12mm; }
+                    @media screen {
+                        body { padding: 20px 24px 48px; background: #f8fafc; }
+                        .resume-doc { padding: 32px 40px; box-shadow: 0 16px 45px rgba(15,23,42,.12); }
+                    }
+                    @media print {
+                        .no-print { display: none !important; }
+                        body { padding: 0; background: #fff; }
+                        .resume-doc { max-width: none; box-shadow: none; }
+                    }
                 </style></head>
                 <body>
-                    <h2 style="margin-top:0;">个人信息 Profile</h2>
-                    <h1>${name}</h1>
-                    ${contactParts.length ? `<div class="contact">${contactParts.join(' &nbsp;|&nbsp; ')}</div>` : ''}
-                    ${sectionsHtml}
+                    <div class="no-print">
+                        <button onclick="window.print()">保存为 PDF</button>
+                        <span>打印目标选择“存储为 PDF”，页面只包含简历正文。</span>
+                    </div>
+                    <main class="resume-doc">
+                        <h2 style="margin-top:0;">个人信息 Profile</h2>
+                        <h1>${name}</h1>
+                        ${contactParts.length ? `<div class="contact">${contactParts.join(' &nbsp;|&nbsp; ')}</div>` : ''}
+                        ${resume.headline ? `<div class="headline">${esc(resume.headline)}</div>` : ''}
+                        ${sectionsHtml}
+                    </main>
                 </body></html>
             `;
 
-            // 导出 PDF：优先「点击直接下载」。用 html2pdf 的字符串渲染模式（由库自建容器，
-            // 之前实测此模式能正确截到内容、不空白），配 A4 宽 + css/legacy 自动分页。
-            // 任何失败都回退到浏览器原生打印预览，保证一定能导出（双保险，公网也稳）。
-            const safeName = (basic.name || '我的简历');
-            const docHtml = `<div style="width:794px;font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;color:#1f2937;padding:48px 56px;line-height:1.7;font-size:13px;background:#fff;box-sizing:border-box;">
-                <style>
-                    h1{font-size:22px;margin-bottom:4px;}
-                    .contact{color:#6b7280;font-size:12px;margin-bottom:16px;}
-                    h2{font-size:14px;color:#111827;border-bottom:2px solid #111827;padding-bottom:4px;margin:18px 0 10px;}
-                    .summary{color:#374151;}
-                    .skills{display:flex;flex-wrap:wrap;gap:6px;}
-                    .skills span{border:1px solid #d1d5db;border-radius:6px;padding:2px 8px;font-size:12px;}
-                    .exp{margin-bottom:12px;break-inside:avoid;page-break-inside:avoid;}
-                    .exp-head{display:flex;justify-content:space-between;align-items:baseline;}
-                    .exp-title{font-weight:700;}
-                    .exp-meta{color:#6b7280;font-size:12px;}
-                    ul{margin:4px 0 0 18px;}
-                    li{margin-bottom:3px;}
-                </style>
-                <h2 style="margin-top:0;">个人信息 Profile</h2>
-                <h1>${name}</h1>
-                ${contactParts.length ? `<div class="contact">${contactParts.join(' &nbsp;|&nbsp; ')}</div>` : ''}
-                ${sectionsHtml}
-            </div>`;
-
-            if (typeof html2pdf !== 'undefined') {
-                try {
-                    html2pdf().set({
-                        margin: 0,
-                        filename: `${safeName}-定制简历.pdf`,
-                        image: { type: 'jpeg', quality: 0.98 },
-                        html2canvas: { scale: 2, useCORS: true, backgroundColor: '#ffffff', windowWidth: 794 },
-                        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-                        // avoid 让 html2pdf 在分页时把「跨越页边界」的整块（经历/教育条目、段标题）
-                        // 整体推到下一页，避免一行被页边界横切（如教育只剩本科、硕士被切到第二页看不到）。
-                        pagebreak: { mode: ['css', 'legacy'], avoid: ['.exp', 'h2'] }
-                    }).from(docHtml, 'string').save().catch(() => {
-                        showJobMessage('直接下载失败，已为你打开打印预览（可另存为 PDF）', 'info');
-                        _printResumeHtml(html);
-                    });
-                    return;
-                } catch (e) {
-                    _printResumeHtml(html);
-                    return;
+            try {
+                const response = await fetch(`${API_URL}/api/v1/resume/export-pdf`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ resume })
+                });
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
                 }
+                const blob = await response.blob();
+                if (!blob || blob.size < 1024) {
+                    throw new Error('PDF 内容异常');
+                }
+                const safeName = String((resume.basic_info && resume.basic_info.name) || '我的简历').replace(/[\\/:*?"<>|]/g, '');
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${safeName}-定制简历.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                setTimeout(() => URL.revokeObjectURL(url), 1200);
+                showJobMessage('PDF 已开始下载', 'success');
+                return;
+            } catch (err) {
+                console.warn('后端 PDF 下载失败，回退打印页:', err);
+                showJobMessage('直接下载失败，已打开打印页兜底', 'info');
+                _printResumeHtml(html);
             }
-            // html2pdf 没加载出来（如断网/CDN挂）→ 回退打印预览
-            _printResumeHtml(html);
         }
 
-        // 打印方式导出（html2pdf 不可用时的回退）：新窗口或隐藏 iframe 调起打印
+        // 打印方式导出：新窗口只写入简历 HTML，避免截图式导出混入当前页面内容。
         function _printResumeHtml(html) {
             const printWindow = window.open('', '_blank', 'width=900,height=1200');
             if (printWindow) {
@@ -5833,7 +5874,9 @@
                 printWindow.document.write(html);
                 printWindow.document.close();
                 printWindow.focus();
-                setTimeout(() => { try { printWindow.print(); } catch (e) {} }, 400);
+                printWindow.onload = () => {
+                    setTimeout(() => { try { printWindow.print(); } catch (e) {} }, 300);
+                };
                 return;
             }
 

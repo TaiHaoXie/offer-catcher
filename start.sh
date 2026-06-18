@@ -56,6 +56,15 @@ start_backend() {
     echo "🔧 启动后端服务..."
     prepare_backend_env
     cd "$BACKEND_DIR"
+    # Trae/IDE 环境可能注入同名 DB_PATH（指向自身缓存库），会导致后端误打开非 SQLite 项目库。
+    # 且当前沙箱不允许后台服务稳定写 offer-catcher-main 目录；沙箱内用 /tmp，常规本地/部署仍用项目库。
+    if [ -n "$TRAE_SANDBOX_CONFIG_NAME" ]; then
+        export DB_PATH="/tmp/offer-catcher-main.db"
+    else
+        export DB_PATH="${DB_PATH:-$BACKEND_DIR/data/offer_catcher.db}"
+    fi
+    # 部分沙箱环境不允许后台服务写项目 logs 目录，日志统一落到 /tmp，避免启动失败。
+    export LOG_DIR="/tmp"
     uvicorn app.main:app --reload --port 8888 > /tmp/offer-catcher-backend.log 2>&1 &
     BACKEND_PID=$!
     echo "   后端 PID: $BACKEND_PID"
@@ -138,7 +147,7 @@ case "${1:-start}" in
     restart)
         stop_services
         sleep 1
-        $0 start
+        bash "$ROOT_DIR/start.sh" start
         ;;
     *)
         echo "用法: $0 {start|stop|status|restart}"

@@ -1893,44 +1893,18 @@ JD原文：
             yield ("done", {"message": "✓ 分析完成"})
 
         except Exception as e:
-            logger.error(f"分析失败，返回降级兜底结果: {e}")
-            # 降级兜底：LLM 重试仍失败时，仍返回一份可渲染的基础结果，避免前端白屏
-            try:
-                safe_requirements = self._extract_jd_requirements(jd_text)
-            except Exception:
-                safe_requirements = []
-            fallback_raw = {
-                "executive_summary": {
-                    "match_score": 60,
-                    "match_level": "C级",
-                    "hiring_recommendation": "AI 智能分析暂时不可用（接口繁忙），以下为基础匹配视图，建议稍后重试以获得完整的招聘官视角分析。",
-                    "one_sentence_verdict": "AI 服务当前繁忙，已为你生成基础匹配视图，稍后重试可获得更深入的逐条分析。"
-                },
-                "jd_decomposition": {
-                    "hard_requirements": safe_requirements[:5],
-                    "core_competencies": [],
-                    "plus_items": [],
-                    "pseudo_requirements": []
-                },
-                "requirement_checks": [
-                    {
-                        "requirement": req,
-                        "original_text": req,
-                        "status": "insufficient_evidence",
-                        "reason": "AI 分析暂不可用，未能逐条比对，建议稍后重试。"
-                    }
-                    for req in safe_requirements[:5]
-                ],
-                "strengths": [],
-                "gaps": [],
-                "rewrite_priorities": [],
-                "action_plan": {"within_24_hours": ["稍后重试一次完整的 AI 匹配分析"], "within_7_days": [], "longer_term": []},
-                "recommendation": {"should_interview": False, "reason": "请稍后重试以获得完整分析结果"}
-            }
-            fallback_result_payload = self._normalize_recruiter_report(fallback_raw, raw_text="")
-            fallback_result_payload["degraded"] = True
-            yield ("result", fallback_result_payload)
-            yield ("done", {"message": "已返回基础结果（AI 服务繁忙）"})
+            logger.error(f"分析失败，停止返回伪评分: {e}")
+            # 这里宁可明确失败，也不能返回一个看似确定的低分。
+            # 否则 AI 429/overload 会被用户误解为“候选人不匹配”，属于严重误判。
+            message = str(e)
+            is_rate_limit = "429" in message or "rate" in message.lower() or "overload" in message.lower() or "繁忙" in message
+            detail = (
+                "AI 接口当前繁忙，请稍候 1-2 分钟后重试。"
+                if is_rate_limit
+                else "AI 匹配分析失败，请稍后重试。"
+            )
+            yield ("error", {"message": detail, "type": "model_unavailable"})
+            yield ("done", {"message": "分析失败，未返回伪评分"})
 
     async def analyze(
         self,
