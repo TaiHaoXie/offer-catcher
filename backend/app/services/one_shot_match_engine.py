@@ -38,7 +38,7 @@ class OneShotMatchEngine:
 
     # 算分逻辑版本号：每次改动评分/锚定逻辑就 +1，让历史旧缓存自动失效，
     # 避免"改了算法但还命中旧结果"（专业对口修复后必须 bump）。
-    SCORING_LOGIC_VERSION = "v8-buffer-tuned"
+    SCORING_LOGIC_VERSION = "v9-local-evidence-guard"
 
     @staticmethod
     def _make_cache_key(resume_text: str, jd_text: str) -> str:
@@ -1087,6 +1087,124 @@ class OneShotMatchEngine:
             })
         return dimensions
 
+    def _extract_local_evidence_terms(self, text: str) -> set:
+        """从原文中抽取较具体的岗位证据词。
+
+        这个函数只服务于“防虚高”本地制动：不做完整语义匹配，只看简历与 JD
+        是否存在可验证的硬技能/工具/产品动作交集。普通泛词（负责、能力、项目）
+        不计入，避免垃圾简历靠套话拿高分。
+        """
+        source = str(text or "")
+        lower = source.lower()
+        terms = set()
+
+        concrete_terms = [
+            "python", "java", "javascript", "typescript", "go", "golang", "c++", "sql",
+            "mysql", "postgresql", "redis", "mongodb", "kafka", "flink", "spark",
+            "spring", "spring boot", "mybatis", "fastapi", "django", "flask", "vue",
+            "react", "docker", "kubernetes", "k8s", "linux", "git", "excel",
+            "tableau", "powerbi", "axure", "figma", "prd", "prompt", "llm", "rag",
+            "agent", "coze", "dify", "api", "restful", "a/b",
+            "数据分析", "用户访谈", "竞品分析", "需求分析", "需求文档", "原型设计",
+            "指标体系", "产品规划", "产品运营", "用户增长", "转化率", "留存",
+            "问卷", "权限", "流程", "后台", "b端", "c端", "商业化", "0到1", "从0到1",
+            "大模型", "人工智能", "机器学习", "深度学习", "自然语言处理", "知识库",
+            "简历解析", "匹配分析", "pdf", "数据库", "接口", "缓存", "消息队列",
+        ]
+        for term in concrete_terms:
+            if term in lower or term in source:
+                terms.add(term.lower())
+
+        # 英文/数字混合 token 往往是技术栈或工具名，保留；过滤过短泛词。
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9+#.\-]{1,}", source):
+            token_l = token.lower().strip(".-")
+            if len(token_l) >= 2 and token_l not in {"to", "be", "or", "and", "pm", "hr"}:
+                terms.add(token_l)
+
+        return terms
+
+    def _apply_local_evidence_guardrail(
+        self,
+        normalized: Dict[str, Any],
+        resume_text: str,
+        jd_text: str,
+    ) -> Dict[str, Any]:
+        """用简历/JD 原文做最低证据校验，防止垃圾简历被模型误判成高匹配。
+
+        只在“原文证据明显不足”时封顶，不做加分。这样不会影响正常简历的高分，
+        但能挡住“吃苦耐劳、性格开朗”这类与 JD 几乎无交集的简历。
+        """
+        resume_terms = self._extract_local_evidence_terms(resume_text)
+        jd_terms = self._extract_local_evidence_terms(jd_text)
+        if not jd_terms:
+            return normalized
+
+        overlap = resume_terms & jd_terms
+        score = int(normalized.get("match_score", 60))
+        resume_plain_len = len(re.sub(r"\s+", "", str(resume_text or "")))
+
+        cap: Optional[int] = None
+        reason = ""
+        if resume_plain_len < 80 and score > 45:
+            cap = 45
+            reason = "简历正文过短，缺少足够经历证据，不能给高匹配分。"
+        elif not overlap and score > 50:
+            cap = 50
+            reason = "简历与 JD 的具体技能/工具/岗位动作几乎没有交集，模型高分被本地证据制动压低。"
+        elif len(overlap) == 1 and len(jd_terms) >= 5 and score > 58:
+            cap = 58
+            reason = "简历只命中极少量 JD 关键证据，不足以支撑 B 级以上判断。"
+        elif len(overlap) <= 2 and len(jd_terms) >= 8 and score > 65:
+            cap = 65
+            reason = "简历命中的 JD 关键证据偏少，当前分数不应超过低 C / 低 B。"
+
+        if cap is None:
+            return normalized
+
+        adjusted = min(score, cap)
+        normalized["match_score"] = adjusted
+        normalized["match_level"] = self._infer_match_level(adjusted)
+        if isinstance(normalized.get("summary"), dict):
+            normalized["summary"]["score"] = adjusted
+            normalized["summary"]["level"] = normalized["match_level"]
+            normalized["summary"]["should_interview"] = False
+            normalized["summary"]["recommendation"] = reason
+        normalized["recommendation"] = {
+            "should_interview": False,
+            "reason": reason,
+        }
+        if isinstance(normalized.get("report_executive_summary"), dict):
+            normalized["report_executive_summary"]["match_score"] = adjusted
+            normalized["report_executive_summary"]["match_level"] = normalized["match_level"]
+            normalized["report_executive_summary"]["hiring_recommendation"] = reason
+
+        sections = normalized.setdefault("sections", {})
+        score_breakdown = sections.get("score_breakdown")
+        if not isinstance(score_breakdown, dict):
+            score_breakdown = {}
+            sections["score_breakdown"] = score_breakdown
+        score_breakdown["local_evidence_guardrail"] = {
+            "applied": True,
+            "cap": cap,
+            "resume_terms": sorted(resume_terms)[:20],
+            "jd_terms": sorted(jd_terms)[:20],
+            "overlap": sorted(overlap),
+            "reason": reason,
+        }
+
+        guard_gap = {
+            "title": "简历与 JD 缺少可验证交集",
+            "severity": "high",
+            "why_it_blocks": "初筛阶段看不到岗位关键技能、工具或项目动作的直接证据。",
+            "fix_now": "补充真实做过的相关项目、工具使用和职责动作；没有做过则不要硬投该方向。",
+            "fix_transfer": "从已有经历里找最接近 JD 的部分重排，但不能把未做过的技能写成已掌握。",
+        }
+        gaps = sections.setdefault("gaps", [])
+        if isinstance(gaps, list) and not any(g.get("title") == guard_gap["title"] for g in gaps if isinstance(g, dict)):
+            gaps.insert(0, guard_gap)
+            sections["missing_skills"] = gaps[:3]
+        return normalized
+
     # ===== 学历本地锚定：把"学历是否达标"这类铁事实交给本地判定，不随模型每次波动 =====
     @staticmethod
     def _detect_degree_rank(text: str) -> int:
@@ -1562,6 +1680,7 @@ class OneShotMatchEngine:
             "full_analysis": raw_text or result.get("full_analysis", "")
         }
 
+        normalized = self._apply_local_evidence_guardrail(normalized, resume_text, jd_text)
         return self._apply_score_guardrails(normalized)
 
     async def _acompletion_with_retry(
